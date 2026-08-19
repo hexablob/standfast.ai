@@ -15,7 +15,6 @@ build/
 *.tsbuildinfo
 coverage/
 .next/
-out/
 
 # ─── Secrets and local config ────────────────────────────────
 .env

@@ -8,7 +8,6 @@ This repository is licensed in two halves, deliberately.
     packages/core     domain logic
     packages/db       schema, migrations, row-level security
     packages/worker   job queue consumers
-    apps/web          the standfast.ai marketing site
 
     Full text: ./LICENSE
     Running a modified version of these packages as a network service

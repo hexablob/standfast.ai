@@ -1,9 +1,5 @@
 packages:
   - packages/*
-  # The marketing site. Not a product package: it imports no workspace
-  # package, ships no runtime, and stays out of the `tsc -b` graph — so a
-  # Next.js dependency can never reach `api`, `core`, `db` or `worker`.
-  - apps/*
   # The evaluation harness is deliberately not under packages/*. It links AGPL
   # packages, is never published, and no product package may depend on it —
   # keeping it out of the glob makes that structural rather than a convention.

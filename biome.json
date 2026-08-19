@@ -11,8 +11,6 @@
       "!**/node_modules",
       "!**/dist",
       "!**/.turbo",
-      "!**/.next",
-      "!apps/web/src/app/globals.css",
       "!.codegraph",
       "!.claude",
       "!infra/openapi/*.json",
@@ -69,19 +67,6 @@
     }
   },
   "overrides": [
-    {
-      "includes": ["apps/web/**"],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "useImportExtensions": "off"
-          },
-          "style": {
-            "noDefaultExport": "off"
-          }
-        }
-      }
-    },
     {
       "includes": ["**/*.config.ts", "**/*.config.js", "**/drizzle.config.ts"],
       "linter": {

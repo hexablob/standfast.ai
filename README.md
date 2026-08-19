@@ -178,7 +178,6 @@ there were.
 | `packages/sdk` | typed client generated from the committed OpenAPI artifact |
 | `packages/cli` | the `standfast` binary |
 | `packages/mcp` | MCP server — three tools today, six specified; ten is a budget, not a start |
-| `apps/web` | the standfast.ai site — static, no runtime, imports no workspace package |
 
 `infra/openapi/openapi.json` is committed on purpose. CI regenerates it and
 fails on a diff, so a breaking API change shows up in review rather than at

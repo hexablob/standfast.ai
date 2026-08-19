@@ -6,13 +6,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [
-        "dist/**",
-        "*.tsbuildinfo",
-        ".next/**",
-        "!.next/cache/**",
-        "out/**"
-      ]
+      "outputs": ["dist/**", "*.tsbuildinfo"]
     },
     "typecheck": {
       "dependsOn": ["^build"],
