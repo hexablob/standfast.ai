@@ -1,0 +1,13 @@
+# Default owner for everything.
+*                       @hexablob
+
+# Load-bearing by design — these define what the rest of the repository is
+# allowed to do, so they never merge without an explicit look.
+/docs/01-thesis.md      @hexablob
+/docs/02-principles.md  @hexablob
+/CLAUDE.md              @hexablob
+/LICENSE                @hexablob
+/NOTICE                 @hexablob
+/SECURITY.md            @hexablob
+/.github/               @hexablob
+/packages/db/           @hexablob

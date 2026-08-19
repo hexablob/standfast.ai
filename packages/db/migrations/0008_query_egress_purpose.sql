@@ -1,0 +1,25 @@
+-- A purpose for the read path's own outbound call, distinct from the batch one.
+--
+-- `docs/13-threat-model.md` (*Egress*, rule 2) separates two things that both
+-- send text to a model and are not the same decision: stored prose the customer
+-- uploaded, sent in a batch job with no timing signal, and a task description
+-- typed minutes ago, sent while the developer waits. Until now the enum could
+-- only express the first, so a deployment that ever made the second call would
+-- have recorded it as `embedding` — and rule 3 makes egress disclosable, which
+-- an answer that cannot tell those two apart does not satisfy. A customer
+-- asking "do my questions leave the machine?" would have had to take the
+-- answer on trust.
+--
+-- **This makes the call recordable. It does not make it permitted.**
+-- `packages/db/src/schema/enums.ts` says why the two are separate mechanisms:
+-- this type is what the database can write down, and
+-- `PERMITTED_PURPOSES` in core is what a deployment may configure.
+-- `query-embedding` is deliberately absent from the second, exactly as
+-- `reranking` is, and that file lists what has to be true before it moves.
+--
+-- Positioned before `reranking` so the type's order matches `EGRESS_PURPOSES`,
+-- which is the order the read path's two calls happen in.
+--
+-- Nothing here calls a model.
+ALTER TYPE "public"."egress_purpose"
+	ADD VALUE IF NOT EXISTS 'query-embedding' BEFORE 'reranking';

@@ -1,0 +1,39 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Dependabot infers a prefix from recent history. Inference is not a
+    # contract, and commitlint now gates every commit in a pull request — so
+    # state it, rather than let a dependency bump fail a check over a message
+    # nobody here wrote. A conventional prefix makes Dependabot add the scope
+    # itself: `chore(deps): ...` and `chore(deps-dev): ...`.
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+    groups:
+      dev-tooling:
+        patterns:
+          - "@biomejs/*"
+          - turbo
+          - typescript
+          - vitest
+          - "@types/*"
+    ignore:
+      # @types/node tracks the pinned runtime, not npm's latest. Types ahead
+      # of the runtime typecheck green against APIs that are not there when
+      # the code runs. .nvmrc now says 26, so 26 is the ceiling; this moves
+      # again only when Node itself does.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # Actions are pinned by SHA, so this is the only thing that moves them —
+  # and every bump arrives as a reviewable diff rather than silently.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

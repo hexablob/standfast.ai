@@ -1,0 +1,42 @@
+# ─── Local content, unpublished ──────────────────────────────
+notes/*
+# exception: the notice itself is versioned
+!notes/README.md
+# spec drafts, unpublished
+docs/**/*.draft.md
+# pre-commit denylist: the names it guards must not be published by the guard
+.githooks/blocked-terms
+
+# ─── Dependencies and artifacts ──────────────────────────────
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+.next/
+out/
+
+# ─── Secrets and local config ────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+standfast.config.local.yaml
+
+# ─── Outillage d'agent, strictement local ────────────────
+# Config machine, pas config projet. `settings.local.json` porte des
+# permissions et une URL de proxy propres au poste ; Serena et Codex
+# indexent le dépôt pour eux-mêmes. Rien de tout cela ne regarde un
+# collaborateur, et rien ne doit partir dans un commit balayé.
+.claude/settings.local.json
+.codex/
+.serena/
+
+# ─── System and editors ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

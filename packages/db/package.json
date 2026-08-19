@@ -1,0 +1,48 @@
+{
+  "name": "@standfast/db",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Postgres schema, reversible migrations and row-level security.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git",
+    "directory": "packages/db"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:down": "node dist/down.js",
+    "db:queue:install": "node dist/queue-install.js",
+    "bootstrap": "node dist/bootstrap.js"
+  },
+  "dependencies": {
+    "@standfast/core": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.22.0",
+    "pg-boss": "12.27.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.3",
+    "drizzle-kit": "0.31.10",
+    "vitest": "4.1.10"
+  }
+}

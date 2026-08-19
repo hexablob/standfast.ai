@@ -1,0 +1,22 @@
+#!/bin/sh
+# .githooks/commit-msg
+#
+# Conventional Commits, checked while the message is still cheap to change.
+# CONTRIBUTING.md states the convention, commitlint.config.js holds the rules,
+# and CI re-checks the whole range — this hook only moves the failure earlier.
+#
+# Install: `pnpm install` runs the root `prepare` script, which points
+# core.hooksPath at this directory. Manually: git config core.hooksPath .githooks
+
+root=$(git rev-parse --show-toplevel)
+
+# Skipped silently when dependencies are not installed — a hook that fails on a
+# fresh clone teaches people to pass --no-verify.
+[ -x "$root/node_modules/.bin/commitlint" ] || exit 0
+
+if ! (cd "$root" && node_modules/.bin/commitlint --edit "$1"); then
+  echo '✗ Commit blocked — the message is not a Conventional Commit.'
+  echo '  Shape:  <type>(<optional scope>): <subject>'
+  echo '  Types:  chore, ci, docs, feat, fix, refactor, test'
+  exit 1
+fi

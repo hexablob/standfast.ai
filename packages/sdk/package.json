@@ -1,0 +1,34 @@
+{
+  "name": "@standfast/sdk",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Typed client generated from the committed OpenAPI artifact.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git",
+    "directory": "packages/sdk"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "sdk:generate": "openapi-typescript ../../infra/openapi/openapi.json -o src/schema.d.ts"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}

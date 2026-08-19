@@ -1,0 +1,45 @@
+#!/bin/sh
+# .githooks/pre-commit
+#
+# Two guards, both about what must never reach a public remote.
+# Install: `pnpm install` runs the root `prepare` script, which points
+# core.hooksPath at this directory. Manually: git config core.hooksPath .githooks
+
+root=$(git rev-parse --show-toplevel)
+
+# 1. Nothing from notes/ ships, except the notice
+leaked=$(git diff --cached --name-only | grep '^notes/' | grep -v '^notes/README\.md$')
+if [ -n "$leaked" ]; then
+  printf '✗ Commit blocked — local files staged:\n%s\n' "$leaked"
+  echo '  Unstage them:  git restore --staged <file>'
+  exit 1
+fi
+
+# 2. No named third party in the staged content.
+#    The terms live in .githooks/blocked-terms, which is itself gitignored —
+#    writing them into this file would publish the very names it exists to
+#    keep out of the repository.
+terms_file="$root/.githooks/blocked-terms"
+if [ -f "$terms_file" ]; then
+  patterns=$(grep -vE '^[[:space:]]*(#|$)' "$terms_file")
+  if [ -n "$patterns" ] && git diff --cached -U0 | grep -iqE "$patterns"; then
+    echo '✗ Commit blocked — a third party is named in the staged diff.'
+    echo '  Rewrite it as a neutral principle before committing.'
+    exit 1
+  fi
+fi
+
+# 3. Staged sources are formatted and lint-clean.
+#    Skipped silently when dependencies are not installed — a hook that
+#    fails on a fresh clone teaches people to pass --no-verify.
+if [ -x "$root/node_modules/.bin/biome" ]; then
+  staged=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '\.(ts|tsx|js|jsx|json|jsonc)$')
+  if [ -n "$staged" ]; then
+    if ! (cd "$root" && printf '%s\n' "$staged" | xargs node_modules/.bin/biome check --no-errors-on-unmatched); then
+      echo '✗ Commit blocked — Biome found problems in the staged files.'
+      echo '  Fix them:  pnpm format'
+      exit 1
+    fi
+  fi
+fi

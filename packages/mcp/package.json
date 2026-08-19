@@ -1,0 +1,39 @@
+{
+  "name": "@standfast/mcp",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "MCP server. Ten tools, no more (docs/08-mcp-server.md).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git",
+    "directory": "packages/mcp"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@standfast/sdk": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "bin": {
+    "standfast-mcp": "./dist/bin.js",
+    "standfast-hook": "./dist/hook-bin.js"
+  },
+  "devDependencies": {
+    "vitest": "4.1.10"
+  }
+}

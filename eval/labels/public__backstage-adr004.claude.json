@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "document": "public/backstage-adr004",
+  "documentHash": "8b2059c0af4c33225d69d9040b9a879d8369e0c5ce730c27b71241ee9e4b871a",
+  "labeller": "claude",
+  "labelledOn": "2026-08-18",
+  "blind": true,
+  "modelAssisted": true,
+  "sections": [
+    {
+      "ordinal": 0,
+      "headingPath": [],
+      "sectionHash": "9eac43b5e232d0481989d82f39f57795513baad8c225495cc9b8f15597abf963",
+      "expect": []
+    },
+    {
+      "ordinal": 1,
+      "headingPath": ["Context"],
+      "sectionHash": "95a022c12e9760e469ce6ee416049bdfa130cbb00b4934f16ba9abd5ec2fb212",
+      "expect": []
+    },
+    {
+      "ordinal": 2,
+      "headingPath": ["Decision"],
+      "sectionHash": "517cd31968d017506c12256cc90b6e9d3dbdd175ffe79a4c1531cbda9c9c6a22",
+      "expect": [
+        {
+          "kind": "decision",
+          "statement": "Every exported symbol is traceable through index files all the way down to the package root, `src/index.ts`.",
+          "quote": "We will make each exported symbol traceable through index files all the way down\nto the root of the package, `src/index.ts`."
+        },
+        {
+          "kind": "constraint",
+          "statement": "An index file re-exports only from its own immediate directory children, and only index files contain re-exports.",
+          "quote": "Each index file will only re-export\nfrom its own immediate directory children, and only index files will have\nre-exports."
+        },
+        {
+          "kind": "convention",
+          "statement": "An index file that re-exports another index file uses the wildcard form.",
+          "quote": "index files that are re-exporting other index files should always\nuse wildcard form"
+        },
+        {
+          "kind": "convention",
+          "statement": "An index file that re-exports symbols from non-index files enumerates every export explicitly.",
+          "quote": "Index files that are re-exporting symbols from non-index files should always\nenumerate all exports"
+        },
+        {
+          "kind": "convention",
+          "statement": "Imports that bypass an index file are discouraged, though they may sometimes be necessary.",
+          "quote": "Imports that bypass an index file are discouraged, but may sometimes be\nnecessary"
+        }
+      ]
+    },
+    {
+      "ordinal": 3,
+      "headingPath": ["Consequences"],
+      "sectionHash": "e6bd44831ffe5f1ca49d7b0a19340e596387a91131d4827373ded4d43a900b69",
+      "expect": []
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Actions are pinned by commit SHA, not by tag. A tag is mutable; a supply
+# chain that can be moved under you is not pinned (docs/02-principles.md, 12).
+env:
+  NODE_VERSION: "26"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commits:
+    name: commit messages
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth 0 because the range below names two commits by SHA, and a
+      # shallow clone has neither.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Every commit in the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: pnpm exec commitlint --from "$BASE" --to "$HEAD" --verbose
+
+      # main requires linear history, so the merge button rewrites these commits
+      # into one whose subject is the pull request title. Checking the range and
+      # not the title would green-light a pull request and then write to main
+      # the exact message this job exists to refuse. The title is untrusted
+      # input and is passed through the environment, never interpolated into the
+      # shell.
+      - name: Pull request title
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s' "$PR_TITLE" | pnpm exec commitlint --verbose
+
+      - name: Head commit
+        if: github.event_name != 'pull_request'
+        run: pnpm exec commitlint --last --verbose
+
+  check:
+    name: lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Biome
+        run: pnpm exec biome ci .
+
+      - name: Typecheck and build
+        run: pnpm exec tsc -b
+
+      - name: Unit tests
+        run: pnpm exec vitest run --coverage
+
+      # Deterministic: no model, no database, no network. It verifies the corpus
+      # still hashes to what the manifest records, that no label points at a
+      # section an edit removed, and that every tier-2 document's repository is
+      # on the allowlist.
+      - name: Evaluation corpus and labels
+        run: pnpm eval check
+
+      - name: OpenAPI artifact has not drifted
+        run: |
+          pnpm openapi:generate
+          git diff --exit-code -- infra/openapi/ \
+            || { echo "::error::infra/openapi/openapi.json is stale. Run 'pnpm openapi:generate' and commit the result."; exit 1; }
+
+      # The SDK is generated from the committed spec, never from a running
+      # server. If the spec moved and these types did not, every consumer is
+      # typechecking against an API that no longer exists.
+      - name: SDK types have not drifted
+        run: |
+          pnpm sdk:generate
+          git diff --exit-code -- packages/sdk/src/schema.d.ts \
+            || { echo "::error::packages/sdk/src/schema.d.ts is stale. Run 'pnpm sdk:generate' and commit the result."; exit 1; }
+
+  database:
+    name: migrations and row-level security
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        env:
+          POSTGRES_PASSWORD: standfast
+          POSTGRES_DB: standfast_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:standfast@localhost:5432/standfast_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc -b
+
+      # Every forward migration must have a hand-written reverse. drizzle-kit
+      # only generates the forward half, so this is the guard that keeps
+      # "every migration is reversible" from decaying into a slogan.
+      - name: Every migration has a down file
+        run: |
+          shopt -s nullglob
+          missing=0
+          for up in packages/db/migrations/*.sql; do
+            case "$up" in *.down.sql) continue;; esac
+            down="${up%.sql}.down.sql"
+            if [ ! -f "$down" ]; then
+              echo "::error file=$up::missing reverse migration $down"
+              missing=1
+            fi
+          done
+          exit $missing
+        shell: bash
+
+      - name: Migrations survive up, down, up
+        run: |
+          shopt -s nullglob
+          migrations=(packages/db/migrations/*.sql)
+          if [ ${#migrations[@]} -eq 0 ]; then
+            echo "No migrations yet — nothing to round-trip."
+            exit 0
+          fi
+          pnpm db:migrate
+          pnpm --filter @standfast/db run db:down
+          pnpm db:migrate
+        shell: bash
+
+      # The second required step. Migration 0005 creates the pgboss schema and
+      # grants on it; pg-boss installs its own tables inside it, keeping its
+      # version ledger the only one. `pnpm db:migrate` alone does not produce a
+      # working database, and this is where that is enforced rather than
+      # remembered.
+      - name: Install the queue
+        run: pnpm db:queue:install
+
+      # A tenant-isolation guarantee is worth something only if there is a
+      # test that attempts to cross the boundary and watches it fail.
+      - name: Integration and RLS regression tests
+        run: pnpm exec vitest run

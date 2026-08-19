@@ -1,0 +1,10 @@
+# Copy to .githooks/blocked-terms — that path is gitignored on purpose.
+#
+# One extended-regexp pattern per line, matched case-insensitively against the
+# staged diff. Blank lines and lines starting with # are ignored.
+#
+# Use it for names that must never appear in a public commit: clients under
+# NDA, employers, prospects, anything that belongs in notes/ rather than docs/.
+#
+# example-client
+# some former employer

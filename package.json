@@ -1,0 +1,48 @@
+{
+  "name": "standfast",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "A shared knowledge layer for coding agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "ci": "biome ci .",
+    "db:generate": "pnpm --filter @standfast/db run db:generate",
+    "db:migrate": "pnpm --filter @standfast/db run db:migrate",
+    "db:queue:install": "pnpm --filter @standfast/db run db:queue:install",
+    "openapi:generate": "pnpm --filter @standfast/api run openapi:generate",
+    "sdk:generate": "pnpm --filter @standfast/sdk run sdk:generate",
+    "start": "pnpm --filter @standfast/api run start",
+    "eval": "pnpm --filter @standfast/eval run eval"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@commitlint/cli": "21.2.1",
+    "@commitlint/config-conventional": "21.2.0",
+    "@types/node": "26.1.2",
+    "@vitest/coverage-v8": "4.1.10",
+    "turbo": "2.10.8",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "openapi-typescript>typescript": "6.0.3"
+    }
+  }
+}

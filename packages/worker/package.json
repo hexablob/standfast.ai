@@ -1,0 +1,48 @@
+{
+  "name": "@standfast/worker",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "pg-boss consumers. Transactional enqueue is mandatory.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git",
+    "directory": "packages/worker"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "record-fixtures": "node dist/adapters/record-fixtures.js",
+    "start": "node dist/main.js",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.116.0",
+    "@standfast/core": "workspace:*",
+    "@standfast/db": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "pg-boss": "12.27.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.3",
+    "pg": "8.22.0",
+    "vitest": "4.1.10"
+  },
+  "bin": {
+    "standfast-worker": "./dist/main.js"
+  }
+}

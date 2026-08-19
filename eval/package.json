@@ -1,0 +1,30 @@
+{
+  "name": "@standfast/eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "The evaluation harness. Nothing ships it and nothing imports it.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexablob/standfast.ai.git",
+    "directory": "eval"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "eval": "tsc -b && node dist/bin.js"
+  },
+  "dependencies": {
+    "@standfast/core": "workspace:*",
+    "@standfast/db": "workspace:*",
+    "@standfast/worker": "workspace:*",
+    "pg": "8.22.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.3",
+    "vitest": "4.1.10"
+  }
+}

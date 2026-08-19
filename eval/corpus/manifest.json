@@ -1,0 +1,285 @@
+{
+  "version": 1,
+  "allowlist": [
+    {
+      "repository": "astral-sh/ruff",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "backstage/backstage",
+      "licence": "Apache-2.0",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "biomejs/biome",
+      "licence": "Apache-2.0",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "denoland/deno",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "kubernetes/community",
+      "licence": "Apache-2.0",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "pnpm/pnpm",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "prettier/prettier",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "rust-lang/rfcs",
+      "licence": "Apache-2.0",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "sveltejs/svelte",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "tokio-rs/tokio",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    },
+    {
+      "repository": "vitejs/vite",
+      "licence": "MIT",
+      "approvedOn": "2026-08-09"
+    }
+  ],
+  "documents": [
+    {
+      "id": "self/02-principles",
+      "tier": "self",
+      "file": "self/02-principles.md",
+      "title": "Design principles",
+      "licence": "AGPL-3.0-only",
+      "contentHash": "24a4f9421d033013451714a2ff53b562c889a660f7e6639b76b9ceff8917a41d",
+      "split": "tuning",
+      "source": {
+        "kind": "this-repository",
+        "path": "docs/02-principles.md",
+        "commit": "ecb78f26d0e003427b82ffd32ad9b9aedd468756"
+      }
+    },
+    {
+      "id": "self/03-architecture",
+      "tier": "self",
+      "file": "self/03-architecture.md",
+      "title": "Architecture",
+      "licence": "AGPL-3.0-only",
+      "contentHash": "3af59bd638350bf382f3ea1498572e25f903536d17c9fc3ca7206a41ce2c3050",
+      "split": "tuning",
+      "source": {
+        "kind": "this-repository",
+        "path": "docs/03-architecture.md",
+        "commit": "ecb78f26d0e003427b82ffd32ad9b9aedd468756"
+      }
+    },
+    {
+      "id": "public/prettier-rationale",
+      "title": "Prettier — Rationale",
+      "file": "public/prettier-rationale.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "d0ee6d39ed6510049d3eebf64952b1dc0e9912a6db53b9be07b4a5aaf99d1a7c",
+      "source": {
+        "kind": "public-repository",
+        "repository": "prettier/prettier",
+        "path": "docs/rationale.md",
+        "commit": "81b1c0a5acf5d7c4cfc4b685b15ed2068f0adddf"
+      }
+    },
+    {
+      "id": "public/prettier-contributing",
+      "title": "Prettier — Contributing",
+      "file": "public/prettier-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "9a4a821830a444bfd05d70bc1b5b1fab06d3029a87dce6552aaca7f72a6cc8fd",
+      "source": {
+        "kind": "public-repository",
+        "repository": "prettier/prettier",
+        "path": "CONTRIBUTING.md",
+        "commit": "dc4753546b85a5cb3da70550b03bb3bf9f9da557"
+      }
+    },
+    {
+      "id": "public/vite-contributing",
+      "title": "Vite — Contributing",
+      "file": "public/vite-contributing.md",
+      "tier": "public",
+      "split": "held-out",
+      "licence": "MIT",
+      "contentHash": "83af52f5a5b5969f8c7f43925f4301627e3abfaf8f7d92d6710b07fc782fab88",
+      "source": {
+        "kind": "public-repository",
+        "repository": "vitejs/vite",
+        "path": "CONTRIBUTING.md",
+        "commit": "51207ba63cc09547aecafaba8d1354cdd8a54871"
+      }
+    },
+    {
+      "id": "public/tokio-contributing",
+      "title": "Tokio — Contributing",
+      "file": "public/tokio-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "47afe90213d8f8ee0a4824329016900eb8c3fb05c2f5eedeee43df29a8dd2ac6",
+      "source": {
+        "kind": "public-repository",
+        "repository": "tokio-rs/tokio",
+        "path": "CONTRIBUTING.md",
+        "commit": "b5054e1dfff24c6166ed61100cfbfd329b16b8f8"
+      }
+    },
+    {
+      "id": "public/biome-contributing",
+      "title": "Biome — Contributing",
+      "file": "public/biome-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "Apache-2.0",
+      "contentHash": "81d2a474fe6eed18d2809022d7f6fd23b63d289dc5b2aa80111b624c4568f97d",
+      "source": {
+        "kind": "public-repository",
+        "repository": "biomejs/biome",
+        "path": "CONTRIBUTING.md",
+        "commit": "659ac1ba2ff1f6973669f16450040ad50f438244"
+      }
+    },
+    {
+      "id": "public/svelte-contributing",
+      "title": "Svelte — Contributing",
+      "file": "public/svelte-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "a3c17c03b1d197045a6f59948ec77143aa32a2fe5cd189b18ee07a4358635b61",
+      "source": {
+        "kind": "public-repository",
+        "repository": "sveltejs/svelte",
+        "path": "CONTRIBUTING.md",
+        "commit": "be8ffeb2a4b0c36657fb5c1bdcf36971da814227"
+      }
+    },
+    {
+      "id": "public/pnpm-contributing",
+      "title": "pnpm — Contributing",
+      "file": "public/pnpm-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "fbaf4d3d7bcaee4608c212272287794f233988d4c9784f9e9bec74ad24b49b6b",
+      "source": {
+        "kind": "public-repository",
+        "repository": "pnpm/pnpm",
+        "path": "CONTRIBUTING.md",
+        "commit": "5b063b9e32d41fd30adface120e592ebc55c9762"
+      }
+    },
+    {
+      "id": "public/ruff-contributing",
+      "title": "Ruff — Contributing",
+      "file": "public/ruff-contributing.md",
+      "tier": "public",
+      "split": "held-out",
+      "licence": "MIT",
+      "contentHash": "a03a4ebf8e8fe60b7d36ffcba25a019f5acde2f37badfcb9d90f1c0a61b2cbe5",
+      "source": {
+        "kind": "public-repository",
+        "repository": "astral-sh/ruff",
+        "path": "CONTRIBUTING.md",
+        "commit": "c360a05e9ad0584e8e42ed8c88c6948bc2f1f1d7"
+      }
+    },
+    {
+      "id": "public/deno-contributing",
+      "title": "Deno — Contributing",
+      "file": "public/deno-contributing.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "MIT",
+      "contentHash": "d1d1570c2dbe526203fb93a37da249d935adc049c74f2bd6e9fbba9cadf33fbb",
+      "source": {
+        "kind": "public-repository",
+        "repository": "denoland/deno",
+        "path": ".github/CONTRIBUTING.md",
+        "commit": "52caf7b3eee7c482023f6d545c7339497ffaf684"
+      }
+    },
+    {
+      "id": "public/rust-rfc-2094-nll",
+      "title": "Rust RFC 2094 — Non-lexical lifetimes",
+      "file": "public/rust-rfc-2094-nll.md",
+      "tier": "public",
+      "split": "held-out",
+      "licence": "Apache-2.0",
+      "contentHash": "bb7e4770cee4aca69af685382f50a5b24f24713f240ec163ed85c8f4ba81478d",
+      "source": {
+        "kind": "public-repository",
+        "repository": "rust-lang/rfcs",
+        "path": "text/2094-nll.md",
+        "commit": "f17e8623ee2e2854570dcdb936a9f4ab08c0fcd4"
+      }
+    },
+    {
+      "id": "public/rust-rfc-1105-api-evolution",
+      "title": "Rust RFC 1105 — API evolution",
+      "file": "public/rust-rfc-1105-api-evolution.md",
+      "tier": "public",
+      "split": "held-out",
+      "licence": "Apache-2.0",
+      "contentHash": "a67913b74c9055be26d4f3b7a61c03d01ec8bdc89592e63723ce984c23571bd5",
+      "source": {
+        "kind": "public-repository",
+        "repository": "rust-lang/rfcs",
+        "path": "text/1105-api-evolution.md",
+        "commit": "f17e8623ee2e2854570dcdb936a9f4ab08c0fcd4"
+      }
+    },
+    {
+      "id": "public/backstage-adr004",
+      "title": "Backstage ADR 004",
+      "file": "public/backstage-adr004.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "Apache-2.0",
+      "contentHash": "8b2059c0af4c33225d69d9040b9a879d8369e0c5ce730c27b71241ee9e4b871a",
+      "source": {
+        "kind": "public-repository",
+        "repository": "backstage/backstage",
+        "path": "docs/architecture-decisions/adr004-module-export-structure.md",
+        "commit": "b5545900a4d32a641f644c5b483cd5b00b0b61a0"
+      }
+    },
+    {
+      "id": "public/k8s-development",
+      "title": "Kubernetes — Development",
+      "file": "public/k8s-development.md",
+      "tier": "public",
+      "split": "tuning",
+      "licence": "Apache-2.0",
+      "contentHash": "abd4d37e94e23dd640b0b3abb757292006f56974c01dd93e210bb84dea63a07b",
+      "source": {
+        "kind": "public-repository",
+        "repository": "kubernetes/community",
+        "path": "contributors/devel/development.md",
+        "commit": "7169158ebceb168c077c55a4f35aeecc566b35dd"
+      }
+    }
+  ]
+}

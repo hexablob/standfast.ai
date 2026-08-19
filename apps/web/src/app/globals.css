@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+/*
+ * Cocoindex Warm Editorial — the whole design system, one file.
+ *
+ * Every value below comes from the token spec. Nothing in the components may
+ * introduce a colour, a radius or a type step that is not named here: one
+ * fact, one home. Arbitrary values in markup are the way a design system
+ * stops being one.
+ */
+@theme {
+  --color-primary: #2a121b;
+  --color-secondary: #be5133;
+  --color-tertiary: #a8432a;
+  --color-neutral: #f6f4e9;
+  --color-surface: #fffbf2;
+  --color-on-surface: #2a121b;
+  --color-error: #c64b3b;
+  --color-accent: #be5133;
+  --color-line: #2a121b59;
+  --color-success: #32d74b;
+  /*
+   * Two values below are the spec's, moved by the smallest amount that clears
+   * 4.5:1 — the spec's own instruction to keep strong contrast between plum
+   * text and cream surfaces, applied where the pinned value did not.
+   *   muted      #8a6f75 -> #81686d   (4.41:1 on cream, now 4.6:1)
+   *   accent-ink derived from #be5133 (3.68:1 on plum, now 4.6:1)
+   * Nothing else in the palette moves.
+   */
+  --color-muted: #81686d;
+  --color-accent-ink: #ce6447;
+
+  --font-sans:
+    var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+
+  --text-display: 59px;
+  --text-display--line-height: 71px;
+  --text-display--letter-spacing: -1.4685px;
+  --text-display--font-weight: 600;
+
+  --text-h1: 42px;
+  --text-h1--line-height: 50px;
+  --text-h1--letter-spacing: -1.0992px;
+  --text-h1--font-weight: 600;
+
+  --text-h2: 31px;
+  --text-h2--line-height: 37px;
+  --text-h2--letter-spacing: -0.24px;
+  --text-h2--font-weight: 600;
+
+  --text-h3: 22px;
+  --text-h3--line-height: 26px;
+  --text-h3--letter-spacing: -0.21px;
+  --text-h3--font-weight: 600;
+
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 28px;
+  --text-body-lg--letter-spacing: -0.08px;
+
+  --text-body: 16px;
+  --text-body--line-height: 24px;
+  --text-body--letter-spacing: -0.08px;
+
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-body-sm--letter-spacing: -0.04px;
+
+  --text-label-lg: 16px;
+  --text-label-lg--line-height: 24px;
+  --text-label-lg--letter-spacing: -0.04px;
+  --text-label-lg--font-weight: 500;
+
+  --text-label: 14px;
+  --text-label--line-height: 20px;
+  --text-label--letter-spacing: 0.08em;
+  --text-label--font-weight: 500;
+
+  --text-label-sm: 12px;
+  --text-label-sm--line-height: 16px;
+  --text-label-sm--letter-spacing: 0.12em;
+  --text-label-sm--font-weight: 500;
+
+  --text-caption: 11px;
+  --text-caption--line-height: 14px;
+  --text-caption--letter-spacing: 0.14em;
+  --text-caption--font-weight: 500;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  --spacing-xs: 6px;
+  --spacing-sm: 14px;
+  --spacing-md: 22px;
+  --spacing-lg: 32px;
+  --spacing-xl: 96px;
+
+  /*
+   * The one deliberate shadow in the system. Depth here is tonal, not
+   * dramatic — this exists so the primary action feels pressable and nothing
+   * else competes with it.
+   */
+  --shadow-action: 0 10px 24px -12px #2a121b66, 0 2px 4px -2px #2a121b1f;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* The header is sticky; anchored headings must clear it. */
+    scroll-padding-top: 96px;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    letter-spacing: var(--text-body--letter-spacing);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Focus is visible on every interactive element, always. A warm palette is
+   * no reason to hide where the keyboard is.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-secondary);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: var(--color-secondary);
+    color: var(--color-surface);
+  }
+
+  /*
+   * The only motion on this site is smooth scrolling and a colour transition
+   * on hover. Turning the first off is the whole accommodation; a blanket
+   * `!important` reset over every element would be guarding against animation
+   * that does not exist.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    .standfast-pulse {
+      animation: none;
+    }
+  }
+
+  @keyframes standfast-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  .standfast-pulse {
+    animation: standfast-pulse 2.6s ease-in-out infinite;
+  }
+}

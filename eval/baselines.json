@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "metrics": {
+    "extraction_precision": {
+      "direction": "higher-is-better",
+      "bar": null,
+      "barIsHardThreshold": false,
+      "baseline": null,
+      "noiseBand": null,
+      "run": null,
+      "note": "Unchosen on purpose. The bar is set against the first run over the labelled corpus, and thereafter tightens only. docs/12-evaluation.md, Open."
+    },
+    "retrieval_precision_under_budget": {
+      "direction": "higher-is-better",
+      "bar": null,
+      "barIsHardThreshold": false,
+      "baseline": null,
+      "noiseBand": null,
+      "run": null,
+      "note": "Phase 2. No corpus of labelled queries exists yet."
+    },
+    "reconciliation_false_positive_rate": {
+      "direction": "lower-is-better",
+      "bar": 0.05,
+      "barIsHardThreshold": true,
+      "baseline": null,
+      "noiseBand": null,
+      "run": null,
+      "note": "The kill metric. Any run at or above the bar fails regardless of the baseline, and the bar tightens only. docs/14-roadmap.md."
+    },
+    "ratification_throughput": {
+      "direction": "higher-is-better",
+      "bar": null,
+      "barIsHardThreshold": false,
+      "baseline": null,
+      "noiseBand": null,
+      "run": null,
+      "note": "Phase 4. Computed from atom_events in a real tenant, not from a corpus."
+    }
+  }
+}

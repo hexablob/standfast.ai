@@ -1,0 +1,32 @@
+Standfast — a shared knowledge layer for coding agents
+Copyright (c) 2026 Hexablob
+
+This repository is licensed in two halves, deliberately.
+
+  AGPL-3.0-only  — the server side.
+    packages/api      HTTP API
+    packages/core     domain logic
+    packages/db       schema, migrations, row-level security
+    packages/worker   job queue consumers
+    apps/web          the standfast.ai marketing site
+
+    Full text: ./LICENSE
+    Running a modified version of these packages as a network service
+    obliges you to publish your modifications. That is the point: it keeps
+    a hosted Standfast from being closed over the work.
+
+  Apache-2.0     — everything a user runs on their own machine.
+    packages/cli      the `standfast` binary
+    packages/mcp      the MCP server coding agents connect to
+    packages/sdk      the generated typed client
+
+    Full text: ./packages/<name>/LICENSE
+    These are permissive on purpose. They are integration surface, and an
+    integration surface with a copyleft obligation attached does not get
+    integrated.
+
+Documentation under docs/ is released under the same terms as the root
+license unless a file states otherwise.
+
+Third-party dependencies retain their own licenses; see the respective
+package.json and node_modules metadata.

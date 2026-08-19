@@ -1,0 +1,44 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["tsconfig.base.json", "biome.json"],
+  "globalEnv": ["NODE_ENV", "DATABASE_URL", "DIRECT_URL"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        "*.tsbuildinfo",
+        ".next/**",
+        "!.next/cache/**",
+        "out/**"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": ["*.tsbuildinfo"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "lint": {},
+    "db:generate": {
+      "cache": false,
+      "outputs": ["migrations/**"]
+    },
+    "db:migrate": {
+      "cache": false,
+      "persistent": false
+    },
+    "openapi:generate": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": ["../../infra/openapi/**"]
+    },
+    "sdk:generate": {
+      "cache": false,
+      "outputs": ["src/schema.d.ts"]
+    }
+  }
+}

@@ -1,0 +1,48 @@
+export {
+  admitEgress,
+  assertEgressAllowed,
+  describeEgress,
+  EGRESS_PURPOSES,
+  type EgressEntry,
+  EgressError,
+  type EgressPurpose,
+  isLocal,
+  PERMITTED_PURPOSES,
+  parseEgressAllowlist,
+} from "./egress.js";
+export {
+  currentExtractorVersion,
+  type ExtractorVersionInputs,
+  extractionPortIds,
+  extractorVersion,
+  FAKE_PORT_IDS,
+  ORDERING_VERSION,
+  SECTIONER_VERSION,
+} from "./extractor-version.js";
+export { contentHash, sectionHash } from "./hash.js";
+export { type Section, sectionMarkdown } from "./markdown.js";
+export { MMR_LAMBDA, type MmrCandidate, mmrSelect } from "./mmr.js";
+export {
+  assemblePack,
+  EMPTY_PACK_TOKENS,
+  PACK_ORDER,
+  type Pack,
+  type PackCandidate,
+  type PackedAtom,
+  type PackKind,
+} from "./pack.js";
+export {
+  lexicalQuery,
+  pathQuery,
+  splitIdentifiers,
+  trigramQuery,
+} from "./query.js";
+export { locateQuote, quoteAt, type Span } from "./quote.js";
+export { type FusedAtom, type RankedList, RRF_K, rrfFuse } from "./rrf.js";
+export {
+  type Band,
+  bandFor,
+  cosineSimilarity,
+  DEDUP_BANDS,
+} from "./similarity.js";
+export { CHARS_PER_ALPHANUMERIC_TOKEN, tokenUpperBound } from "./tokens.js";
