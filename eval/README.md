@@ -23,20 +23,24 @@ depend on it.
 ## Commands
 
 ```bash
-pnpm eval check                  # corpus integrity, label validity, coverage
-pnpm eval skeleton <doc> <who>   # write a blank label set for one document
-pnpm eval score <run-file>       # compute the metrics of an adjudicated run
-pnpm eval extraction             # run the extractor over the corpus
-pnpm eval reconciliation         # phase 3; always skips, no corpus, no labels
+pnpm eval check                       # corpus integrity, label validity, coverage
+pnpm eval skeleton <doc> <who>        # write a blank label set for one document
+pnpm eval score <run-file>            # compute the metrics of an adjudicated run
+pnpm eval extraction                  # run the extractor over the corpus
+pnpm eval retrieval <scored-run>      # run the labelled queries at each budget
+pnpm eval reconciliation <findings>   # score a checking session's findings
 ```
 
 `check` is deterministic — no model, no database, no network — and runs on every
-pull request. `extraction` needs an extractor, which phase 1c and 1d have not
-built yet; it prints `SKIPPED` with the reason and exits 0. A metric that did not
-run must never look like a metric that passed.
+pull request. The three runners are built, and each waits on human input:
+`extraction` on real providers and section labels; `retrieval` on a labelled
+query set and an adjudicated extraction run; `reconciliation` on the edit
+corpus, its labels, a findings file and `STANDFAST_EVAL_MIN_FINDINGS`. Whatever
+is missing, the runner prints `SKIPPED` with the reason and exits 0. A metric
+that did not run must never look like a metric that passed.
 
-Exit codes: `0` success, including a loud skip. `1` a failure or a regression.
-`2` a usage error.
+Exit codes: `0` success — a loud skip, and `extraction`'s successfully written
+worksheet, are successes. `1` a failure or a regression. `2` a usage error.
 
 ## Layout
 
@@ -44,7 +48,9 @@ Exit codes: `0` success, including a loud skip. `1` a failure or a regression.
 | --- | --- |
 | `corpus/manifest.json` | every document, its tier, split, licence, source and content hash |
 | `corpus/self/` | this repository's own documents, tier 1 |
-| `labels/` | one file per (document, labeller) |
+| `corpus/edits.json` | the reconciliation edit corpus, once a human constructs it |
+| `labels/` | one file per (document, labeller); `edits.<labeller>.json` for edit verdicts |
+| `queries/` | labelled retrieval queries, one file per labeller |
 | `runs/` | committed runs — the numbers, with everything needed to reproduce them |
 | `baselines.json` | the bar and the current baseline per metric |
 | `src/metrics/` | the scoring functions: pure, no I/O, unit-tested |
@@ -185,3 +191,76 @@ inconvenience:
 - the resulting run would not satisfy `RunFile` — most often the slice guard,
   which refuses a run over nothing but this repository's own documentation
   reported as the headline slice.
+
+## Running the labelled queries
+
+```sh
+pnpm eval retrieval runs/<date>-extraction-all.json
+```
+
+Retrieval serves ratified atoms, and ratified means a human accepted them: the
+runner re-runs extraction into its own database (`STANDFAST_EVAL_DATABASE_URL`,
+same rules as above), ratifies exactly the atoms the scored run's adjudications
+accepted, then answers every labelled query at every committed budget through
+the same stages the API serves — four generators, RRF, MMR, budgeted assembly.
+No reranker provider is bound anywhere yet, so every run measures the
+fused-only regime, and the run file says so.
+
+Queries live in `queries/<labeller>.json`, written by hand from the code and
+the task — never from the atom list, which is the contamination hazard specific
+to this metric:
+
+```jsonc
+{
+  "version": 1,
+  "labeller": "ana",
+  "labelledOn": "2026-09-01",
+  "blind": true,
+  "modelAssisted": false,
+  "budgets": [500, 1000, 2000],     // at least three; (precision, budget) is the unit
+  "queries": [
+    {
+      "id": "add-a-migration",
+      "scope": "task",              // or "file": paths only, no free text
+      "task": "add a column to the atoms table",
+      "paths": ["packages/db/migrations"],
+      "paraphrased": false,         // the slice worded away from the atom's vocabulary
+      "governs": ["<sectionHash>#0"]  // expected-atom ids from the label sets
+    }
+  ]
+}
+```
+
+There is no skeleton command for queries: a skeleton enumerates what already
+exists, and here writing the queries *is* the labelling. The runner reports
+precision, budget used and displacement per budget, the paraphrased slice
+separately, and still awaits: this file, and an adjudicated extraction run.
+
+## The edit corpus
+
+```sh
+export STANDFAST_EVAL_MIN_FINDINGS=…   # a human decision; there is no default
+pnpm eval reconciliation <findings-file>
+```
+
+The checker is a coding agent running the product's own prompts — the harness
+does not invent a second reconciliation prompt to measure. A checking session's
+findings are recorded to a file and scored against the labelled edits:
+
+- `corpus/edits.json` — constructed edits in four slices: seeded violation,
+  seeded near-miss (the largest), innocent (the majority by volume), legitimate
+  drift. Each carries a diff, the atom it is checked against, and who
+  constructed it.
+- `labels/edits.<labeller>.json` — one verdict per edit, `violated` or
+  `no-finding`, written blind by someone who did **not** construct the edits.
+- the findings file — one `{ edit, verdict }` per checked edit, with the
+  checking model's name and version, because the false-positive rate is a
+  property of the model doing the check.
+
+The rate is `violated` findings on `no-finding` edits over `violated` findings
+emitted, reported with a Wilson 95% interval and beside the miss rate — never
+without it, because the degenerate optimum of a kill metric is silence. Below
+`STANDFAST_EVAL_MIN_FINDINGS` the harness prints the counts and withholds the
+rate: the minimum is a function of the 5% bar and the tolerable interval width,
+and the harness refuses to choose it. The runner still awaits the corpus, its
+labels, a findings file, and that minimum.

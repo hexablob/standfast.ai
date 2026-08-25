@@ -1,10 +1,17 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentExtractorVersion } from "@standfast/core";
+import { contentHash, currentExtractorVersion } from "@standfast/core";
 import { resolvePorts } from "@standfast/worker";
 import { agreements } from "./agreement.js";
 import { checkCorpus, loadCorpus, type Problem } from "./corpus.js";
+import {
+  FindingsFile,
+  loadEditCorpus,
+  loadEditLabels,
+  parseMinFindings,
+  ReconciliationRunFile,
+} from "./edits.js";
 import {
   checkLabels,
   coverage,
@@ -13,9 +20,16 @@ import {
   loadLabels,
 } from "./labels.js";
 import { scoreExtraction } from "./metrics/extraction.js";
+import {
+  type EditExpectation,
+  scoreReconciliation,
+} from "./metrics/reconciliation.js";
 import { Baselines, compareToBaseline } from "./metrics/regression.js";
+import { type BudgetScore, scoreRetrieval } from "./metrics/retrieval.js";
 import { failure, heading, line, skipped, warning } from "./output.js";
-import { databaseAvailable, extractorAvailable } from "./preconditions.js";
+import { extractorAvailable } from "./preconditions.js";
+import { loadQuerySets, RetrievalRunFile } from "./queries.js";
+import { READ_PATH, runRetrieval } from "./retrieval.js";
 import { RunFile } from "./run.js";
 import { evalDatabaseUrl, runExtraction } from "./runner.js";
 import { labelSkeleton } from "./skeleton.js";
@@ -28,8 +42,8 @@ const USAGE = `pnpm eval <command>
   skeleton <document> <who>   write a blank label set for a corpus document
   score <run-file>            compute the metrics of an adjudicated run
   extraction                  run the extractor over the corpus
-  retrieval                   run the labelled queries under the token budget
-  reconciliation              measure the reconciler's false-positive rate
+  retrieval <scored-run>      run the labelled queries at each committed budget
+  reconciliation <findings>   score a checking session against the edit corpus
 
 Everything deterministic runs everywhere. Anything that needs a model or a
 database skips loudly rather than reporting a pass it did not earn.
@@ -357,7 +371,393 @@ async function extraction(): Promise<number> {
   line();
   line("  Every verdict is null. Adjudicate them by hand, then:");
   line(`    pnpm eval score ${target}`);
-  return 1;
+  // Zero, because the command did the whole of its job: a worksheet awaiting a
+  // human is what success looks like here. `docs/12-evaluation.md` reserves 1
+  // for a failure or a regression, and either can still arrive — from `score`,
+  // once the verdicts are in.
+  return 0;
+}
+
+async function retrieval(runPath: string | undefined): Promise<number> {
+  const name = "retrieval_precision_under_budget" as const;
+  heading(name);
+
+  const querySets = loadQuerySets(ROOT);
+  if (querySets.length === 0) {
+    skipped(
+      name,
+      "no labelled queries exist. A human writes eval/queries/<labeller>.json " +
+        "— task or file-path queries, the expected-atom ids that govern each, " +
+        "and at least three budgets — from the code and the task, never from " +
+        "the atom list (docs/12-evaluation.md, §2)",
+    );
+    return 0;
+  }
+
+  const precondition = extractorAvailable();
+  if (!precondition.met) {
+    skipped(name, precondition.reason);
+    return 0;
+  }
+
+  if (!runPath) {
+    process.stderr.write(
+      "usage: pnpm eval retrieval <scored-extraction-run>\n\n" +
+        "Retrieval serves ratified atoms, and ratified means a human accepted\n" +
+        "them: pass the adjudicated extraction run whose accepted atoms this\n" +
+        "run may treat as canonical.\n",
+    );
+    return 2;
+  }
+
+  const scored = RunFile.parse(JSON.parse(readFileSync(runPath, "utf8")));
+  const pending = scored.adjudications.filter((a) => a.verdict === null).length;
+  if (pending > 0) {
+    failure(
+      `${runPath} has ${pending} unadjudicated atom(s). Ratified atoms are ` +
+        "this metric's corpus, and only a human adjudication says which those are.",
+    );
+    return 1;
+  }
+
+  const corpus = loadCorpus(ROOT);
+  const labels = loadLabels(ROOT);
+  const url = evalDatabaseUrl();
+  const ports = resolvePorts().ports;
+  const version = currentExtractorVersion();
+
+  const result = await runRetrieval({
+    corpus,
+    labels,
+    querySets,
+    scored,
+    extractorVersion: version,
+    ports,
+    databaseUrl: url,
+  });
+
+  const totalQueries = querySets.reduce((n, s) => n + s.queries.length, 0);
+  const paraphrasedCount = querySets.reduce(
+    (n, s) => n + s.queries.filter((q) => q.paraphrased).length,
+    0,
+  );
+  const blind = querySets.every((s) => s.blind);
+  const modelAssisted = querySets.some((s) => s.modelAssisted);
+
+  line(
+    `  queries    ${totalQueries} (${paraphrasedCount} paraphrased) from ${querySets.length} set(s)`,
+  );
+  line(
+    `  atoms      ${result.ratified} ratified from ${result.acceptedInRun} accepted in the scored run`,
+  );
+  line(
+    "  reranker   fused-only — no provider is bound; the reranked regime awaits one",
+  );
+  if (result.unmatchedAdjudications > 0) {
+    warning(
+      `${result.unmatchedAdjudications} accepted adjudication(s) matched no ` +
+        "freshly extracted atom — the extractor drifted from the scored run, " +
+        "and the ratified set is partial",
+    );
+  }
+  if (result.unrealisedGoverning > 0) {
+    line(
+      `  governing  ${result.unrealisedGoverning} labelled governing atom(s) never became canonical — an extraction recall failure, measured there, not displacement`,
+    );
+  }
+  if (!blind || modelAssisted) {
+    line(`  CONTAMINATED: blind=${blind} modelAssisted=${modelAssisted}`);
+  }
+
+  if (result.budgetViolations.length > 0) {
+    failure(
+      `${result.budgetViolations.length} pack(s) exceeded their budget — ` +
+        `${result.budgetViolations.slice(0, 5).join(", ")}. The budget is a ` +
+        "gate, not a measurement (docs/14-roadmap.md, phase 2 criterion 1).",
+    );
+    return 1;
+  }
+
+  const score = scoreRetrieval(result.records);
+  const printCurve = (rows: BudgetScore[]): void => {
+    for (const row of rows) {
+      const precision =
+        row.precision === null ? "n/a  " : row.precision.toFixed(3);
+      line(
+        `    ${String(row.budgetTokens).padStart(6)}  precision ${precision}  delivered ${row.delivered}  displaced ${row.displacement}  used(max) ${row.budgetTokensUsedMax}`,
+      );
+    }
+  };
+  line();
+  line("  precision under budget (pooled):");
+  printCurve(score.budgets);
+  if (score.paraphrased.length > 0) {
+    line("  paraphrased slice:");
+    printCurve(score.paraphrased);
+  }
+
+  const run = {
+    version: 1 as const,
+    metric: name,
+    ranOn: new Date().toISOString().slice(0, 10),
+    corpusRevision: corpus.revision,
+    codeRevision: process.env["STANDFAST_EVAL_CODE_REVISION"] ?? "unknown",
+    models: {
+      extraction: { name: ports.extractor.id, version },
+      embedding: { name: ports.embedder.id, version },
+      judge: { name: ports.judge.id, version },
+    },
+    extractorVersion: version,
+    configuration: { ...READ_PATH },
+    reranker: "fused-only" as const,
+    scoredRun: runPath,
+    labels: {
+      labellers: [...new Set(querySets.map((s) => s.labeller))],
+      blind,
+      modelAssisted,
+    },
+    budgets: [...new Set(querySets.flatMap((s) => s.budgets))].sort(
+      (a, b) => a - b,
+    ),
+    queryCount: totalQueries,
+    ratifiedAtoms: result.ratified,
+    score,
+  };
+  const parsed = RetrievalRunFile.safeParse(run);
+  if (!parsed.success) {
+    failure(
+      `the run this produced is not a valid run file:\n  ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n  ")}`,
+    );
+    return 1;
+  }
+  const target = join(ROOT, "runs", `${run.ranOn}-retrieval.json`);
+  writeFileSync(target, `${JSON.stringify(run, null, 2)}\n`);
+  line();
+  line(`  run        ${target}`);
+
+  const baselines = Baselines.parse(
+    JSON.parse(readFileSync(join(ROOT, "baselines.json"), "utf8")),
+  );
+  const entry = baselines.metrics[name];
+  const gatable = score.budgets.filter((row) => row.precision !== null);
+  if (gatable.length === 0) {
+    warning(
+      "nothing was delivered at any budget — there is no precision to compare",
+    );
+    return 0;
+  }
+  if (entry.baseline === null || entry.noiseBand === null) {
+    const comparison = compareToBaseline(gatable[0]?.precision ?? 0, entry);
+    line(`  ${comparison.status.toUpperCase()}: ${comparison.reason}`);
+    return comparison.fails ? 1 : 0;
+  }
+  // The pair (precision, budget) is the unit, and the committed baseline is a
+  // single number: until it records its budget, every point on the curve is
+  // gated, because failing any point is the only reading that does not quietly
+  // choose one.
+  let failed = false;
+  for (const row of gatable) {
+    const comparison = compareToBaseline(row.precision ?? 0, entry);
+    line(
+      `  budget ${row.budgetTokens}: ${comparison.status.toUpperCase()} — ${comparison.reason}`,
+    );
+    if (comparison.fails) {
+      failed = true;
+    }
+  }
+  return failed ? 1 : 0;
+}
+
+function reconciliation(findingsPath: string | undefined): number {
+  const name = "reconciliation_false_positive_rate" as const;
+  heading(name);
+
+  const editCorpus = loadEditCorpus(ROOT);
+  if (editCorpus === null) {
+    skipped(
+      name,
+      "no corpus of edits exists. A human constructs eval/corpus/edits.json " +
+        "— seeded violations, seeded near-misses, innocent edits, legitimate " +
+        "drift — and a different human labels it blind " +
+        "(docs/12-evaluation.md, §3). The bar is 5% and it is a hard " +
+        "threshold, so a number produced without that corpus would measure " +
+        "how hard someone tried, not whether the reconciler works",
+    );
+    return 0;
+  }
+
+  const labelSets = loadEditLabels(ROOT);
+  if (labelSets.length === 0) {
+    skipped(
+      name,
+      "the edit corpus exists and nobody has labelled it. A human who did " +
+        "not construct the edits writes eval/labels/edits.<labeller>.json — " +
+        "one verdict per edit, blind, before any checking model runs",
+    );
+    return 0;
+  }
+
+  const min = parseMinFindings(process.env["STANDFAST_EVAL_MIN_FINDINGS"]);
+  if (min.kind === "unset") {
+    skipped(
+      name,
+      "STANDFAST_EVAL_MIN_FINDINGS is not set. The minimum finding count " +
+        "below which the rate is unreportable is a function of the 5% bar " +
+        "and the interval width the decision can tolerate; a human computes " +
+        "it from the corpus and provides it, and the harness refuses to " +
+        "default it (docs/12-evaluation.md, Open)",
+    );
+    return 0;
+  }
+  if (min.kind === "invalid") {
+    process.stderr.write(
+      `STANDFAST_EVAL_MIN_FINDINGS must be a positive integer (got '${min.raw}')\n`,
+    );
+    return 2;
+  }
+
+  if (!findingsPath) {
+    process.stderr.write(
+      "usage: pnpm eval reconciliation <findings-file>\n\n" +
+        "The checker is a coding agent running the product's own prompts, not\n" +
+        "this harness. Record its findings — one {edit, verdict} per corpus\n" +
+        "edit, with the checking model's name and version — and pass that file.\n",
+    );
+    return 2;
+  }
+
+  const findings = FindingsFile.parse(
+    JSON.parse(readFileSync(findingsPath, "utf8")),
+  );
+
+  const known = new Set(editCorpus.edits.map((edit) => edit.id));
+  const merged = new Map<string, "violated" | "no-finding">();
+  for (const set of labelSets) {
+    for (const verdict of set.verdicts) {
+      if (!known.has(verdict.edit)) {
+        failure(
+          `labels/edits.${set.labeller}.json labels '${verdict.edit}', which is not an edit in the corpus`,
+        );
+        return 1;
+      }
+      const existing = merged.get(verdict.edit);
+      if (existing !== undefined && existing !== verdict.expected) {
+        failure(
+          `edit '${verdict.edit}' is labelled '${existing}' by one labeller ` +
+            `and '${verdict.expected}' by another. Humans adjudicate a ` +
+            "disagreement; the harness does not average one.",
+        );
+        return 1;
+      }
+      merged.set(verdict.edit, verdict.expected);
+    }
+  }
+
+  const expectations: EditExpectation[] = [];
+  const unlabelled: string[] = [];
+  for (const edit of editCorpus.edits) {
+    const expected = merged.get(edit.id);
+    if (expected === undefined) {
+      unlabelled.push(edit.id);
+    } else {
+      expectations.push({ id: edit.id, slice: edit.slice, expected });
+    }
+  }
+  if (unlabelled.length > 0) {
+    failure(
+      `${unlabelled.length} edit(s) have no verdict, so a finding on them ` +
+        `could not be scored: ${unlabelled.slice(0, 10).join(", ")}`,
+    );
+    return 1;
+  }
+
+  const score = scoreReconciliation(expectations, findings.findings);
+  const blind = labelSets.every((set) => set.blind);
+  const modelAssisted = labelSets.some((set) => set.modelAssisted);
+
+  line(`  edits          ${score.edits}`);
+  line(
+    `  findings       ${score.findings} recorded, ${score.emitted} with verdict 'violated'`,
+  );
+  line(`  model          ${findings.model.name} ${findings.model.version}`);
+  if (!blind || modelAssisted) {
+    line(`  CONTAMINATED: blind=${blind} modelAssisted=${modelAssisted}`);
+  }
+  line();
+  for (const [slice, row] of Object.entries(score.perSlice)) {
+    line(
+      `    ${slice.padEnd(18)} edits ${row.edits}, violated findings ${row.emitted}, false positives ${row.falsePositives}, misses ${row.misses}`,
+    );
+  }
+  line();
+  // Beside the headline, never optimised: the degenerate optimum of a kill
+  // metric is silence, and a reconciler that emits nothing scores zero.
+  line(
+    `  misses         ${score.misses} (rate ${score.missRate === null ? "n/a" : score.missRate.toFixed(3)})`,
+  );
+
+  const run = {
+    version: 1 as const,
+    metric: name,
+    ranOn: new Date().toISOString().slice(0, 10),
+    editCorpusHash: contentHash(
+      readFileSync(join(ROOT, "corpus", "edits.json"), "utf8"),
+    ),
+    codeRevision: process.env["STANDFAST_EVAL_CODE_REVISION"] ?? "unknown",
+    model: findings.model,
+    configuration: { minFindings: min.value },
+    labels: {
+      labellers: [...new Set(labelSets.map((set) => set.labeller))],
+      blind,
+      modelAssisted,
+    },
+    findingsFile: findingsPath,
+    score: { ...score, reported: score.emitted >= min.value },
+  };
+  const parsed = ReconciliationRunFile.safeParse(run);
+  if (!parsed.success) {
+    failure(
+      `the run this produced is not a valid run file:\n  ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n  ")}`,
+    );
+    return 1;
+  }
+  const target = join(ROOT, "runs", `${run.ranOn}-reconciliation.json`);
+  writeFileSync(target, `${JSON.stringify(run, null, 2)}\n`);
+  line(`  run            ${target}`);
+  line();
+
+  if (score.emitted < min.value) {
+    line(
+      `  rate withheld: ${score.emitted} 'violated' finding(s) is below the ` +
+        `minimum of ${min.value} (STANDFAST_EVAL_MIN_FINDINGS). At low counts ` +
+        "the rate is unstable — one bad finding out of eight is 12.5% — so " +
+        "the counts above are reported and the rate is not. Grow the corpus, " +
+        "or record a longer checking session.",
+    );
+    return 0;
+  }
+
+  const rate = score.rate;
+  const interval = score.interval;
+  if (rate === null || interval === null) {
+    // Unreachable while the minimum is at least one; kept to keep types honest.
+    warning("nothing was emitted — there is no rate to compare");
+    return 0;
+  }
+  line(
+    `  false-positive rate ${rate.toFixed(4)} (${score.falsePositives}/${score.emitted}), 95% CI ${interval.low.toFixed(4)}–${interval.high.toFixed(4)}`,
+  );
+
+  const baselines = Baselines.parse(
+    JSON.parse(readFileSync(join(ROOT, "baselines.json"), "utf8")),
+  );
+  const comparison = compareToBaseline(rate, baselines.metrics[name]);
+  line(`  ${comparison.status.toUpperCase()}: ${comparison.reason}`);
+  return comparison.fails ? 1 : 0;
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -372,33 +772,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       return score(rest[0]);
     case "extraction":
       return await extraction();
-    case "retrieval": {
-      const precondition = databaseAvailable(process.env);
-      heading("retrieval_precision_under_budget");
-      skipped(
-        "retrieval_precision_under_budget",
-        precondition.met
-          ? "phase 2 owns retrieval; there are no labelled queries yet"
-          : precondition.reason,
-      );
-      return 0;
-    }
-    case "reconciliation": {
-      // Unconditional, where `retrieval` at least consults a precondition:
-      // there is nothing here a precondition could check. A database and three
-      // real ports would not make this measurable, because what is missing is
-      // a corpus of edits and the person who marked which findings on it were
-      // wrong. And `reconciliation_false_positive_rate` is the one metric in
-      // `baselines.json` carrying `barIsHardThreshold` — the first number this
-      // command ever prints is a number the product can be killed by, so it
-      // waits for the labeller rather than meeting them halfway.
-      heading("reconciliation_false_positive_rate");
-      skipped(
-        "reconciliation_false_positive_rate",
-        "phase 3 owns reconciliation; no corpus of edits exists and nobody has labelled one. The bar is 5% and it is a hard threshold, so a number produced without a human labeller would measure how hard someone tried, not whether the reconciler works",
-      );
-      return 0;
-    }
+    case "retrieval":
+      return await retrieval(rest[0]);
+    case "reconciliation":
+      return reconciliation(rest[0]);
     case undefined:
     case "--help":
     case "-h":

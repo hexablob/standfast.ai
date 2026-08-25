@@ -104,6 +104,11 @@ export type RunnerResult = {
   readonly expectedAtomIds: string[];
   readonly coverage: { self: number; public: number; synthetic: number };
   readonly documents: string[];
+  /**
+   * The tenant this run created, so a second measurement — retrieval — can
+   * ratify and query the same atoms instead of guessing where they went.
+   */
+  readonly tenant: { orgId: string; actorId: string; projectId: string };
 };
 
 function documentsFor(options: RunnerOptions): LoadedDocument[] {
@@ -256,5 +261,10 @@ export async function runExtraction(
     expectedAtomIds,
     coverage,
     documents: documents.map((d) => d.id).sort(),
+    tenant: {
+      orgId: tenant.orgId,
+      actorId: tenant.actorId,
+      projectId: project.id,
+    },
   };
 }

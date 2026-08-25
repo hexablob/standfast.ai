@@ -446,21 +446,70 @@ export function quoteInSection(item: {
  * One atom and no flag that shows more. `docs/15-ratification.md` refuses bulk
  * approval, and a screen of twenty is how a human comes to answer them as a
  * batch.
+ *
+ * `--skip` is the document's Skip decision, and the cursor it moves is
+ * deliberately client-side and stateless: the flag rides the queue route's
+ * existing `offset`, so skipping writes no event, no status, no row anywhere —
+ * exactly what "moves the cursor, writes nothing" requires. A server-side
+ * per-reviewer cursor would also move the reviewer off the head of the queue,
+ * and `docs/15-ratification.md` builds on the head being both the item on
+ * screen and the queue-age metric — the same row, unable to drift apart.
+ * Forgetting the skip on the next bare `next` is the feature: the atom nobody
+ * decided is still at the head, still ageing, still first.
  */
 export async function queueNext(ctx: Ctx): Promise<void> {
   const projectId = await requireProject(ctx);
+
+  // Same shape check as `pageQuery`, which owns `--limit`/`--offset`:
+  // `Number("")` is 0, so a blank is not a number, and 0 itself is fine — it
+  // is the head of the queue, which is what no flag means too.
+  const rawSkip = ctx.flags["skip"];
+  let skip = 0;
+  if (rawSkip !== undefined) {
+    const value =
+      typeof rawSkip === "string" && rawSkip.trim() !== ""
+        ? Number(rawSkip)
+        : Number.NaN;
+    if (!Number.isInteger(value) || value < 0) {
+      throw new UsageError("--skip must be a non-negative integer");
+    }
+    skip = value;
+  }
+
   const page = unwrap(
     await ctx.client().GET("/v1/projects/{projectId}/queue", {
       params: {
         path: { projectId },
-        query: { ...queueFilters(ctx), limit: 1 },
+        query: { ...queueFilters(ctx), limit: 1, offset: skip },
       },
     }),
   );
 
   const item = page.items[0];
   if (!item) {
-    out(ctx.format, "Nothing awaiting ratification.", null);
+    // Two different facts. An empty queue is done; a skip past the end is a
+    // cursor pointing at nothing while the queue still waits. The window
+    // total rides the rows, so a page past the end carries none — ask the
+    // head for the real count before telling the reviewer which fact this is.
+    let waiting = page.total;
+    if (skip > 0) {
+      const head = unwrap(
+        await ctx.client().GET("/v1/projects/{projectId}/queue", {
+          params: {
+            path: { projectId },
+            query: { ...queueFilters(ctx), limit: 1, offset: 0 },
+          },
+        }),
+      );
+      waiting = head.total;
+    }
+    out(
+      ctx.format,
+      skip > 0 && waiting > 0
+        ? `Skipped past the end: ${waiting} awaiting ratification, none ${skip} deep.`
+        : "Nothing awaiting ratification.",
+      null,
+    );
     return;
   }
 
@@ -470,6 +519,21 @@ export async function queueNext(ctx: Ctx): Promise<void> {
       : "(no heading)";
   const proposer = item.proposedByName ?? "unknown";
   const kind = item.proposedByKind ? ` (${item.proposedByKind})` : "";
+
+  // Reading-order item 6, last as the document orders it, and in full — the
+  // incumbent is provenance for the supersede decision, and provenance is not
+  // collapsible: no truncation, no expander. Absent when the server found no
+  // canonical atom in the judge band, and nothing here goes looking.
+  const incumbent = item.incumbent
+    ? [
+        "",
+        `INCUMBENT  canonical, similarity ${item.incumbent.similarity.toFixed(2)} — ratifying with --supersedes replaces it`,
+        "",
+        item.incumbent.statement,
+        "",
+        `Atom       ${item.incumbent.id}`,
+      ]
+    : [];
 
   out(
     ctx.format,
@@ -482,11 +546,17 @@ export async function queueNext(ctx: Ctx): Promise<void> {
       "",
       `STATEMENT  ${item.statement}`,
       `KIND       ${item.kind}`,
+      ...incumbent,
       "",
       `Proposed   ${item.proposedAt} by ${proposer}${kind}`,
       `Atom       ${item.id}`,
       "",
       `  standfast ratify ${item.id}`,
+      // docs/15-ratification.md: `supersedes` is offered only when an
+      // incumbent is on screen. No incumbent, no hint.
+      ...(item.incumbent
+        ? [`  standfast ratify ${item.id} --supersedes ${item.incumbent.id}`]
+        : []),
       `  standfast reject ${item.id} --reason <${REJECT_REASONS.join("|")}>`,
       `\nShowing 1 of ${page.total} awaiting ratification.`,
     ].join("\n"),

@@ -138,8 +138,13 @@ the claim costs nothing and inverts that.
 5. **Flags, if any**, inline against the span of the statement that fired them.
 6. **The incumbent, if one exists** — the canonical atom this candidate may
    replace, shown side by side. Its origin is the 0.80 – 0.93 dedup band from
-   `docs/05-extraction.md`; if that pass produced no near neighbour, no
-   incumbent is shown and the reviewer is not asked to go looking.
+   `docs/05-extraction.md`, and the queue route serves it on the item itself,
+   computed at read time: the nearest canonical atom whose similarity falls in
+   that band. Read time rather than stored, because the nearest canonical atom
+   changes with every ratification and a persisted answer would be stale by
+   the time it was read. If nothing falls in the band, or the candidate has no
+   embedding, no incumbent is served and the reviewer is not asked to go
+   looking.
 
 **Provenance is not collapsible.** No disclosure triangle that defaults to
 closed, no "show source" affordance, no truncation with an expander. A
@@ -152,9 +157,9 @@ not exist rather than that it is off by default.
 | Decision | Status written | Event written | Exists |
 | --- | --- | --- | --- |
 | Ratify | `provisional` → `canonical` | `ratified` | route yes, surface no |
-| Reject | `provisional` → `rejected` | `rejected` | schema and `rejectAtom`; no route, no command |
-| Ratify-superseding | candidate → `canonical`, incumbent → `superseded` | `ratified` and `superseded` | no |
-| Skip | nothing | nothing | no |
+| Reject | `provisional` → `rejected` | `rejected` | route and command yes |
+| Ratify-superseding | candidate → `canonical`, incumbent → `superseded` | `ratified` and `superseded` | yes, as `supersedes` on ratify |
+| Skip | nothing | nothing | yes, as `--skip` on next |
 
 ### Ratify
 
@@ -173,7 +178,8 @@ The reason is **optional and structured**: a closed vocabulary — *not true*,
 *duplicate*, *not a decision*, *wrong severity*, *the document is wrong* — plus
 optional free text. That is now the `atom_reject_reason` enum with those five
 values, alongside nullable `reason` and `reason_note` columns on `atom_events`
-(migration `0011`). Nothing writes them yet. Two consequences, and the second
+(migration `0011`), and `standfast reject --reason` writes them through the
+route. Two consequences, and the second
 is the interesting one:
 
 - Optional, because a required field converts a decision into a form, and the
@@ -193,9 +199,10 @@ is the interesting one:
 Not a separate verb. `docs/04-data-model.md` defines the transition as *a
 successor atom is ratified*, so superseding is ratification with a target:
 `supersedes: atomId` on the ratify request, offered only when an incumbent is
-on screen. One transaction writes the candidate to `canonical`, the incumbent
-to `superseded`, `superseded_by` on the incumbent, and both events with the
-same human actor.
+on screen — which the queue item makes possible without a second request,
+since it carries the incumbent when one exists. One transaction writes the
+candidate to `canonical`, the incumbent to `superseded`, `superseded_by` on
+the incumbent, and both events with the same human actor.
 
 A field rather than a fifth route, because it is one decision. Two routes would
 make the atomicity a caller's responsibility, and a half-applied supersede
@@ -210,6 +217,16 @@ That is a deliberate omission rather than an oversight. Clearance rate counts
 events; if a skip were recorded, skipping would raise it, and the surface would
 have a keystroke that improves the headline metric while deciding nothing. The
 atom's queue age keeps running, which is exactly right — nobody decided.
+
+The surface is `standfast next --skip <n>`, and the flag is the whole cursor:
+client-side and stateless, riding the queue route's existing `offset`. Nothing
+is persisted anywhere — no event, no status, no per-reviewer row — so "writes
+nothing" is structural rather than promised. A server-side cursor was
+considered and refused for a second reason: it would move the reviewer off the
+head of the queue, and this document leans on the head being both the item on
+screen and the queue-age metric — the same row, unable to drift apart. That a
+bare `next` after a skip returns to the head is the point, not a limitation:
+the atom nobody decided is still the oldest thing waiting.
 
 ## Flagging
 
@@ -338,8 +355,8 @@ the thing is a decision rather than a result.
   "a human said no to a proposal", because that is the signal the
   extraction-precision corpus measures (`docs/12-evaluation.md`). Folding a
   withdrawal into it would inflate the rejection rate with atoms that never
-  failed. **No route and no command reaches the transition** — the status and
-  `retireAtom` exist, and nothing a human can run calls it.
+  failed. The transition is reachable: `POST /v1/atoms/{atomId}/retire` and
+  `standfast retire` call `retireAtom`, and the route refuses an agent actor.
 - **Whether the queue can show what an atom would govern.** "These 14 files"
   is the single most useful fact for judging a `constraint`. Phase 2 shipped
   the retrieval it needs, so the fact is now computable; whether phase 4 ships

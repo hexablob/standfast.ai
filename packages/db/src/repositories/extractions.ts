@@ -194,9 +194,12 @@ export type NearestAtom = {
  * same sentence in two projects is two decisions that happen to agree. RLS
  * already confines the query to the org.
  *
- * No index, and that is deliberate for phase 1 — HNSW parameters are chosen
- * against a real vector distribution, and building one over a handful of rows
- * costs time and teaches nothing. Do not "fix" this.
+ * Phase 1 ran this unindexed on purpose — HNSW parameters are chosen against
+ * a real vector distribution, and a handful of rows teaches nothing. Phase 2
+ * then needed the same operator class for its first candidate generator, so
+ * migration 0007 built `atoms_embedding_hnsw_idx` and this query now rides
+ * it; the parameters, and why the choice splits between build time and query
+ * time, are documented there.
  */
 export async function nearestAtom(
   db: Db,

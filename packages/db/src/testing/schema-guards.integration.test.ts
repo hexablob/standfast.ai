@@ -96,6 +96,37 @@ describe("invariant 3 — nothing that could hold source code", () => {
   );
 });
 
+describe("the authentication lookup is hardened as migration 0014 says", () => {
+  // The comment in src/auth.ts calls the lookup an equality comparison
+  // against a unique index. Migration 0014 is what made that sentence true;
+  // this pins it. UNIQUE matters as much as the index: resolve_api_key ends
+  // in LIMIT 1, and LIMIT 1 must never be what picks between two rows
+  // carrying the same hash.
+  it("api_keys.hash has a unique index", async () => {
+    const r = await admin.query<{ indexdef: string }>(
+      `select indexdef from pg_indexes
+        where schemaname = 'public' and tablename = 'api_keys'
+          and indexname = 'api_keys_hash_key'`,
+    );
+    expect(r.rows[0]?.indexdef).toMatch(/UNIQUE INDEX .* \(hash\)/);
+  });
+
+  // A SECURITY DEFINER pin that omits pg_temp still searches the temporary
+  // schema first for relation names. The pin must name it, and name it last.
+  it("auth.resolve_api_key pins a search_path ending in pg_temp", async () => {
+    const r = await admin.query<{ proconfig: string[] | null }>(
+      `select proconfig from pg_proc
+        where proname = 'resolve_api_key'
+          and pronamespace = 'auth'::regnamespace`,
+    );
+    const searchPath = (r.rows[0]?.proconfig ?? []).find((entry) =>
+      entry.startsWith("search_path="),
+    );
+    expect(searchPath).toMatch(/^search_path=pg_catalog\b/);
+    expect(searchPath).toMatch(/\bpg_temp$/);
+  });
+});
+
 describe("pgvector is available on this host", () => {
   // Created by 0000 with no vector column yet. If this fails, the retrieval
   // design does not run where the database lives, and that is worth knowing

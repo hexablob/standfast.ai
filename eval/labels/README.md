@@ -21,5 +21,9 @@ See [`../README.md`](../README.md) for the labelling procedure and the four
 contamination rules, and [`docs/12-evaluation.md`](../../docs/12-evaluation.md)
 for why they exist.
 
+Edit verdicts for the reconciliation corpus also live here, as
+`edits.<labeller>.json` — a different schema, described in
+[`../README.md`](../README.md) and validated by `pnpm eval reconciliation`.
+
 This directory is empty of labels. It is tracked so it exists before anyone needs
 it.

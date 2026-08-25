@@ -92,8 +92,26 @@ Below the surface: migrations 0011 (the closed rejection vocabulary, and the
 labelled corpus that falls out of ordinary use), 0012 (`retired`), and 0013,
 which makes "only a human decides" a constraint on `atom_events` rather than a
 predicate in a repository — an agent could write a `rejected` event until it
-landed. `packages/db` has `rejectAtom`, `retireAtom`, ratify-with-`supersedes`,
-and the queue and throughput queries.
+landed. 0014 hardens the authentication path: a unique index on `api_keys.hash`,
+and `pg_temp` last in the pin `auth.resolve_api_key` runs under. `packages/db`
+has `rejectAtom`, `retireAtom`, ratify-with-`supersedes`, and the queue and
+throughput queries.
+
+**Two of phase 4's three exit criteria are met.** `scripts/e2e.sh` runs the
+whole sequence — install, `standfast sync`, extraction, ratification, a
+`SessionStart` pack carrying the ratified atom — and CI runs the same script a
+human runs. Every tag runs the release job, which attests each tarball, verifies
+it, and fails a deliberately corrupted copy. The third, ratification throughput,
+is computable and uncomputed: the bar is unchosen and the corpus is recorded
+`atom_events` from real use. `--older-than` and the reconciliation harness's
+minimum finding count both refuse to default themselves in, for that reason.
+
+The queue reads the way `docs/15-ratification.md` asks: `standfast next --skip`
+moves a client-side cursor that writes no event and no status — a persisted
+cursor would move the reviewer off the head of the queue, and the head *is* the
+queue-age metric — and the incumbent a candidate may replace is computed at read
+time from the judge band, shown whole, with `--supersedes` offered only when one
+is on screen.
 
 **Registry publication does not happen in phase 4.** A server that serves almost
 nothing spends a first impression that cannot be spent twice, and the kill metric
@@ -105,10 +123,18 @@ extractor is not an extractor, and a bar set against a bullet-splitter could
 never be defended.
 
 `eval/` holds the harness. It has the corpus, the label format, the scoring
-functions and `pnpm eval check`, and it has no labels — a human writes those
-blind, before the first prompt, and no model may do it for them. Three of the
-four bars are `null` in `eval/baselines.json` on purpose; do not fill one in
-without a corpus to set it against.
+functions, and all four commands — `check`, `extraction`, `retrieval` and
+`reconciliation` — and it has no labels: a human writes those blind, before the
+first prompt, and no model may do it for them. Three of the four bars are `null`
+in `eval/baselines.json` on purpose; do not fill one in without a corpus to set
+it against.
+
+The two runners built last are mostly refusals, and that is the point. Each
+skips loudly, naming exactly what a human still owes it — a query set, an edit
+corpus, a minimum finding count below which a false-positive rate is not
+reportable. CI runs both on every push to keep those refusals honest, and will
+fail the day the first labels land without the real measurement wired in behind
+them. That failure is a tripwire, not a defect.
 
 `docs/14-roadmap.md` owns the phase boundaries and the exit criteria; read it
 before starting phase-3 work, `docs/07-reconciliation.md` for the

@@ -235,12 +235,15 @@ Most mechanisms below are in migration `0000_foundation.sql` or in
 `packages/db`, and each of those is asserted by a test that attempts the
 violation and watches it fail (`docs/02-principles.md`, 8).
 
-Two are not, and the difference matters more than the list does. The start-up
-guard is code in `packages/api`, not a constraint, and no test drives its
-refusal end to end. The MCP transport boundary is an architectural property —
-`packages/mcp` holds no Postgres driver — enforced by nobody but review. Both
-are in *Still open* below, and a reader should treat an unasserted mechanism as
-a claim rather than a control.
+One still is not, and the difference matters more than the list does. The
+start-up guard's refusal is now driven directly:
+`packages/db/src/testing/guard.integration.test.ts` creates a real `BYPASSRLS`
+login role, points the pool at it, and watches
+`assertTenantIsolationApplies()` throw — then makes the same call as the
+unprivileged role, the positive control. The MCP transport boundary remains an
+architectural property — `packages/mcp` holds no Postgres driver — enforced by
+nobody but review, and a reader should treat an unasserted mechanism as a
+claim rather than a control.
 
 | Mechanism | Defends against | Does **not** defend against |
 | --- | --- | --- |
@@ -274,13 +277,20 @@ The positive control — *sees its own org's documents* — is there for the
 mirror-image failure, where broken role membership would deny everything and
 make every negative test pass while proving nothing.
 
+**The refusal is driven, at both layers.** `guard.integration.test.ts` creates
+a real `BYPASSRLS` login role and watches `assertTenantIsolationApplies()`
+refuse it, with the unprivileged role as the positive control — a guard that
+refused everyone would fail that one. Above it,
+`packages/api/src/serve.integration.test.ts` spawns the built
+`packages/api/dist/serve.js`, the same entry point `scripts/e2e.sh` starts,
+against a role of that kind, and asserts three things at once: the process
+exits non-zero, the refusal is on its stderr, and nothing is listening on the
+port. The second test is what makes the `await` in `serve.ts` load-bearing. A
+guard that threw while `serve()` ran anyway would have passed the first test
+and served every org's rows to everyone; deleting that `await` used to pass CI.
+
 ### Still open
 
-- **No test asserts the guard's refusal end to end.** `guard.ts` reads
-  `pg_roles` for `current_user`, but nothing in CI starts the API under a
-  `BYPASSRLS` role and asserts it will not bind a port. The check that makes
-  the loudest failure loud is itself the least exercised code in the
-  repository.
 - **Teams (phase 5) put a second principal inside one org.** Every policy
   today keys on `org_id` alone. Per-project permissions mean a second predicate
   on every policy, and `docs/14-roadmap.md` makes the extended RLS suite a
@@ -324,14 +334,23 @@ completely.
 - **The function owner is `standfast_auth`**, which cannot log in and cannot bypass
   RLS. Nothing else in the system ever runs as it, and what it can see is three
   columns of one table.
-- **`search_path` is pinned:** `SET search_path = pg_catalog, public`. This is
-  a privilege-escalation control, not a style preference. A `SECURITY DEFINER`
-  function executes with its owner's privileges, and with an unpinned
-  `search_path` the unqualified names in its body resolve using the *caller's*
-  path. Anyone who can create an object in a schema appearing earlier in that
-  path can shadow a table, a function or an operator used in the body — and
-  their object then runs as the owner. The pin fixes resolution regardless of
-  what the caller has set.
+- **`search_path` is pinned:** `SET search_path = pg_catalog, public, pg_temp`
+  since migration `0014`. This is a privilege-escalation control, not a style
+  preference. A `SECURITY DEFINER` function executes with its owner's
+  privileges, and with an unpinned `search_path` the unqualified names in its
+  body resolve using the *caller's* path. Anyone who can create an object in a
+  schema appearing earlier in that path can shadow a table, a function or an
+  operator used in the body — and their object then runs as the owner. The pin
+  fixes resolution regardless of what the caller has set, and `pg_temp` is
+  named last because otherwise Postgres searches the temporary schema ahead of
+  every listed schema for relation names.
+  `schema-guards.integration.test.ts` asserts the pin against `pg_proc`.
+- **The lookup is a unique-indexed equality.** Migration `0014` adds
+  `api_keys_hash_key`, a `UNIQUE` index on `api_keys.hash`, so the query is
+  no longer a sequential scan and its `LIMIT 1` never picks between two rows
+  carrying the same hash — a duplicate is unrepresentable instead. The
+  comment in `packages/db/src/auth.ts` that described the lookup as indexed
+  is now true, and names the index.
 - **Revocation and expiry live in the policy**, not in application code:
   `USING (revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()))`.
   An expired key is *invisible* to the lookup rather than filtered by a
@@ -340,16 +359,30 @@ completely.
 - **One error message.** `requireApiKey` returns *"Invalid API key"* for
   absent, revoked, expired and wrong alike. Distinguishing them tells an
   attacker which of their guesses was once real.
+- **Failed attempts are throttled, and only failed attempts.** Twenty
+  failures from one client address inside a fixed sixty-second window, after
+  which that address gets `429` with a bare *"Too many requests"* — the same
+  answer whether the key was absent, revoked, expired or wrong, so the
+  throttle is not the oracle the single 401 exists to deny. A request
+  carrying a **valid** key is never counted and never refused, at any rate,
+  from any address: the read path's latency budget is a product promise
+  (`docs/06-retrieval.md`), and a limiter able to slow a legitimate `context`
+  call would trade a property this project sells for a speculative one. This
+  is **not** an availability control and does not reopen the exclusion below;
+  it is a guessing throttle. It does nothing against a 256-bit key. It does
+  something against a revoked key retried in a loop, a key lifted from a
+  shell history and probed against several deployments, and a script walking
+  a list.
+- **The counter is keyed on the socket address**, from
+  `getConnInfo(c).remote.address`, never on `X-Forwarded-For`. That header is
+  written by whoever is calling unless a trusted proxy overwrites it, so
+  keying on it would let any caller pick their own bucket, and a fresh one
+  per request. The number of tracked addresses is capped and evicted
+  expired-first, because a limiter that grows a map per source address is a
+  memory exhaustion primitive wearing the costume of a defence.
 
 ### Still open
 
-- **`pg_temp` is not listed in the pinned path.** Postgres searches the
-  temporary schema ahead of the listed schemas for relation names when it is
-  not explicitly placed, so the convention is to list it last. Here the body
-  names `public.api_keys` in full, which resolves regardless — but the
-  qualification is doing that work, not the pin, and an edit that drops the
-  qualification would reopen the hole silently. Appending `pg_temp` costs
-  nothing and has not been done.
 - **`scopes` is resolved and never enforced.** `resolveApiKey` returns it,
   `requireApiKey` sets it on the Hono context, `bootstrap` writes
   `['read','write']`, and **no route reads it**. A read-only key today is a
@@ -357,17 +390,17 @@ completely.
   exist so that enforcement is an addition rather than a migration, but until a
   route checks it, the word "scoped" should not appear in any description of
   Standfast's keys.
-- **`api_keys.hash` has no index and no unique constraint.** The lookup is a
-  sequential scan on every authenticated request, and `LIMIT 1` resolves a
-  duplicate arbitrarily. The comment in `packages/db/src/auth.ts` justifying
-  SHA-256 describes the lookup as "an indexed equality comparison inside
-  Postgres"; migration `0000` creates indexes on `(org_id, prefix)` and
-  `actor_id` only. The security argument survives — turning a timing signal
-  into a key still means constructing a preimage — but the sentence is
-  currently wrong and the index should exist.
-- **No rate limit anywhere.** Nothing throttles authentication attempts. It
-  does not help against a 256-bit key, and it does help against everything else
-  on the same surface.
+- **The throttle is per process.** A deployment running N API processes
+  behind a load balancer permits N × 20 failures per window rather than 20,
+  because each process counts alone, and a restart forgives everything
+  outstanding. The upgrade path is a shared counter keyed the same way; it is
+  not built, because one process is what is deployed and a shared store would
+  put a second network round trip and a new failure mode on the
+  authentication path.
+- **Everything with no socket address shares one bucket.** In practice that
+  is the in-process test app. If a deployment ever landed there, the blast
+  radius is bounded by what goes in a bucket at all: only requests that have
+  already failed to authenticate.
 
 ---
 
@@ -496,6 +529,28 @@ is invariant 3 working as designed rather than a gap to close. That makes the
 location **structurally unverifiable**, not merely unverified: no validation
 reaches it, and the only reader who can confirm a finding points at real code is
 the human with the repository open. A finding is a claim awaiting review.
+
+**A document body is bounded.** `PutDocument.body` used to be an unbounded
+string, which meant the one route that accepts arbitrary customer text
+accepted arbitrarily much of it. Two guards now, at two layers, because they
+catch different things: `DOCUMENT_BODY_MAX_CHARS` in `packages/core` is a
+million characters and reaches the wire through the Zod schema, so it appears
+in the OpenAPI artifact and a client that overshoots gets a typed `400` naming
+the limit; `hono/body-limit` on `/v1/*` refuses a request body over 4 MiB
+before `JSON.parse` sees it, which is what a character cap running *after*
+parsing cannot do. The byte limit sits an order of magnitude above the
+character cap on purpose — the typed 400 is what a real client hits, and the
+byte limit is only ever the backstop.
+
+This is **input validation at a trust boundary, and not an availability
+control**; denial of service is excluded below and stays excluded. A million
+characters is roughly 250,000 words, several times the longest document anyone
+has written to govern a codebase, and everything downstream — the sectioner,
+the hashes, the span arithmetic, the extraction pass — was sized for a
+document a human wrote. Past that bound the payload is not a document that was
+written, and refusing it at the edge is cheaper than carrying it into the
+pipeline. It does not narrow the bullet below: a body under the cap is still
+free text, and a cap is not a content check.
 
 ### Still open
 
@@ -711,8 +766,12 @@ Recorded so each question is asked once.
   sub-processors, jurisdiction: procurement questions, answered by contract, not
   threats this model can close. *What* we send them is very much in scope — see
   *Egress* above, which this bullet used to swallow by accident.
-- **Denial of service**, beyond noting that no rate limit exists. There is no
-  availability commitment to threaten.
+- **Denial of service.** There is no availability commitment to threaten. The
+  throttle in §3 and the size bounds in §5 are not exceptions to that and must
+  not be read as one: the first caps guessing at the credential surface, the
+  second is input validation at a trust boundary, and neither is offered as a
+  defence of availability. Nothing here promises this process survives a
+  flood.
 - **Physical and host security of the database provider.**
 - **Findings in third-party dependencies**, which go upstream first — tell us
   too if Standfast's use of them makes the impact worse (`SECURITY.md`).
@@ -784,8 +843,30 @@ document
 **Unscheduled, and each of them cheap**
 
 - Enforce `scopes`, or stop calling the keys scoped.
-- Index `api_keys.hash`, and correct the comment in `packages/db/src/auth.ts`.
-- Append `pg_temp` to the pinned `search_path` in `auth.resolve_api_key`.
-- A test that starts the API under a `BYPASSRLS` role and asserts it refuses.
-- A rate limit on the authentication path.
+- ~~Index `api_keys.hash`, and correct the comment in
+  `packages/db/src/auth.ts`.~~ **Closed in phase 4**: migration `0014` adds
+  `api_keys_hash_key`, a `UNIQUE` index, the comment now names it, and
+  `schema-guards.integration.test.ts` asserts it exists.
+- ~~Append `pg_temp` to the pinned `search_path` in `auth.resolve_api_key`.~~
+  **Closed in phase 4**, in the same migration and asserted by the same
+  suite.
+- ~~A test that starts the API under a `BYPASSRLS` role and asserts it
+  refuses.~~ **Closed in phase 4**, at both layers.
+  `guard.integration.test.ts` creates a real `BYPASSRLS` login role and
+  watches `assertTenantIsolationApplies()` refuse it, and
+  `packages/api/src/serve.integration.test.ts` spawns the built
+  `packages/api/dist/serve.js` against such a role and asserts it exits
+  non-zero, names the refusal on stderr, and never binds the port. The
+  `await` in `packages/api/src/serve.ts` is load-bearing at last.
+- ~~A rate limit on the authentication path.~~ **Closed in phase 4**:
+  `requireApiKey` counts *failed* attempts per client socket address, twenty
+  to a fixed sixty-second window, and answers `429` with a bare message past
+  it. A valid key is never counted and never throttled. It is a guessing
+  throttle, not an availability control — the exclusion above is unchanged.
+  The counters are per process and in memory; the ceiling is recorded in §3.
+- **A bound on `PutDocument.body`** — never on this list, found and closed in
+  phase 4: a million-character cap in `packages/core`, on the wire and in the
+  OpenAPI artifact through the Zod schema, with `hono/body-limit` at 4 MiB
+  behind it so an oversized payload dies before `JSON.parse`. Input
+  validation at a trust boundary; §5 has the framing.
 - A key rotation and revocation command in the CLI.

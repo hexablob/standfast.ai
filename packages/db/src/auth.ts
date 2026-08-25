@@ -19,11 +19,12 @@ export type ResolvedKey = {
  * is add tens of milliseconds to every authenticated request, and p95 latency
  * is a contract (docs/02-principles.md, 4).
  *
- * Note that lookup is an indexed equality comparison inside Postgres, not a
- * comparison in JavaScript — there is no place here for `timingSafeEqual` to
- * apply. The timing channel that leaves is not useful to an attacker: probing
- * it reveals something about where a hash sits in an index, and turning that
- * into a key would mean constructing a SHA-256 preimage.
+ * Note that lookup is an equality comparison against the unique index on
+ * `hash` (`api_keys_hash_key`, migration 0014), not a comparison in
+ * JavaScript — there is no place here for `timingSafeEqual` to apply. The
+ * timing channel that leaves is not useful to an attacker: probing it reveals
+ * something about where a hash sits in an index, and turning that into a key
+ * would mean constructing a SHA-256 preimage.
  */
 export function hashApiKey(key: string): string {
   return createHash("sha256").update(key, "utf8").digest("hex");

@@ -569,6 +569,154 @@ describe("standfast end to end", () => {
     expect(shown.stdout).toContain("\u00bbAlways ship.\u00ab");
   });
 
+  /**
+   * `docs/15-ratification.md`, Skip: moves the cursor, writes no status and no
+   * event. The cursor is `--skip` riding the queue route's offset \u2014 client-side
+   * and stateless \u2014 so the durable trace this test looks for is the absence of
+   * one.
+   */
+  it("--skip shows the next atom over and writes nothing", async () => {
+    await seedProvisional("Ship on Wednesdays.");
+    await seedProvisional("Ship on Thursdays.");
+
+    const listed = await capture("queue", "--project", projectId, "--json");
+    expect(listed.code).toBe(0);
+    const page = JSON.parse(listed.stdout) as {
+      items: { id: string }[];
+      total: number;
+    };
+    expect(page.total).toBeGreaterThanOrEqual(2);
+    const headId = page.items[0]?.id ?? "";
+    const secondId = page.items[1]?.id ?? "";
+
+    const skipped = await capture(
+      "next",
+      "--project",
+      projectId,
+      "--skip",
+      "1",
+      "--json",
+    );
+    expect(skipped.code).toBe(0);
+    expect((JSON.parse(skipped.stdout) as { id: string }).id).toBe(secondId);
+
+    // The skipped-over head: still provisional, and its only event is still
+    // the proposal. A skip that left either changed would be a decision.
+    const probe = new Client({ connectionString: adminUrl });
+    await probe.connect();
+    try {
+      const events = await probe.query(
+        "select event from atom_events where atom_id = $1 order by at",
+        [headId],
+      );
+      expect(events.rows.map((row) => row.event)).toEqual(["proposed"]);
+      const status = await probe.query(
+        "select status from atoms where id = $1",
+        [headId],
+      );
+      expect(status.rows[0]?.status).toBe("provisional");
+    } finally {
+      await probe.end();
+    }
+
+    // A bare `next` forgets the skip, because there is nowhere to remember
+    // it: the atom nobody decided is still the head.
+    const again = await capture("next", "--project", projectId, "--json");
+    expect((JSON.parse(again.stdout) as { id: string }).id).toBe(headId);
+
+    // Past the end is a cursor pointing at nothing, not an empty queue.
+    const past = await capture(
+      "next",
+      "--project",
+      projectId,
+      "--skip",
+      "9999",
+    );
+    expect(past.code).toBe(0);
+    expect(past.stdout).toContain("Skipped past the end");
+    expect(past.stdout).toContain(`${page.total} awaiting ratification`);
+  });
+
+  /**
+   * Reading-order item 6 (`docs/15-ratification.md`): the incumbent in full,
+   * and the `--supersedes` hint offered only while one is on screen.
+   */
+  it("next shows the incumbent and offers --supersedes only then", async () => {
+    const candidateId = await seedProvisional("Ship every Friday at noon.");
+    const incumbentId = await seedProvisional("Deploys leave from main.");
+    const done = await capture("ratify", incumbentId);
+    expect(done.code).toBe(0);
+
+    const probe = new Client({ connectionString: adminUrl });
+    await probe.connect();
+    try {
+      // Unit vectors a chosen angle apart, written by the superuser because
+      // the API \u2014 correctly \u2014 accepts no vectors. 0.9 is inside the judge
+      // band, so the canonical atom is this candidate's incumbent.
+      const unit = (cos: number) => {
+        const v = new Array(1024).fill(0);
+        v[0] = cos;
+        v[1] = Math.sqrt(1 - cos * cos);
+        return `[${v.join(",")}]`;
+      };
+      await probe.query("update atoms set embedding = $1 where id = $2", [
+        unit(1),
+        candidateId,
+      ]);
+      await probe.query("update atoms set embedding = $1 where id = $2", [
+        unit(0.9),
+        incumbentId,
+      ]);
+
+      const listed = await capture(
+        "queue",
+        "--project",
+        projectId,
+        "--limit",
+        "50",
+        "--json",
+      );
+      const page = JSON.parse(listed.stdout) as { items: { id: string }[] };
+      const at = page.items.findIndex((item) => item.id === candidateId);
+      expect(at).toBeGreaterThanOrEqual(0);
+
+      const shown = await capture(
+        "next",
+        "--project",
+        projectId,
+        "--skip",
+        String(at),
+      );
+      expect(shown.code).toBe(0);
+      expect(shown.stdout).toContain("INCUMBENT");
+      expect(shown.stdout).toContain("similarity 0.90");
+      // The statement whole, and the hint carrying the incumbent's id.
+      expect(shown.stdout).toContain("Deploys leave from main.");
+      expect(shown.stdout).toContain(`--supersedes ${incumbentId}`);
+
+      // An atom with no embedding has no incumbent, and no hint offers what
+      // is not on screen.
+      const otherAt = page.items.findIndex((item) => item.id !== candidateId);
+      expect(otherAt).toBeGreaterThanOrEqual(0);
+      const other = await capture(
+        "next",
+        "--project",
+        projectId,
+        "--skip",
+        String(otherAt),
+      );
+      expect(other.code).toBe(0);
+      expect(other.stdout).not.toContain("INCUMBENT");
+      expect(other.stdout).not.toContain("--supersedes");
+    } finally {
+      await probe.query(
+        "update atoms set embedding = null where id = any($1::uuid[])",
+        [[candidateId, incumbentId]],
+      );
+      await probe.end();
+    }
+  });
+
   it("ratify promotes one atom and takes it out of the queue", async () => {
     const id = await seedProvisional("Ship on Tuesdays.");
 

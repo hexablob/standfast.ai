@@ -99,6 +99,13 @@
       "when": 1787405000000,
       "tag": "0013_decision_is_human",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787405100000,
+      "tag": "0014_auth_hardening",
+      "breakpoints": true
     }
   ]
 }

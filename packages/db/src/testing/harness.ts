@@ -21,7 +21,7 @@ export function adminUrl(): string {
   return url;
 }
 
-function appUrl(): string {
+export function appUrl(): string {
   const url = new URL(adminUrl());
   url.username = TEST_ROLE;
   url.password = TEST_PASSWORD;

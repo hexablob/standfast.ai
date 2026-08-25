@@ -1932,6 +1932,13 @@ export interface components {
             sectionHeadingPath: string[];
             /** @description The whole section. Never truncated. */
             sectionBody: string;
+            /** @description The canonical near neighbour from the dedup judge band, or null. */
+            incumbent: {
+                /** Format: uuid */
+                id: string;
+                statement: string;
+                similarity: number;
+            } | null;
         };
         Ratification: {
             /** @description Provisional atoms in the project. Never a filtered count. */

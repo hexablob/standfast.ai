@@ -1,14 +1,17 @@
 <!-- docs/12-evaluation.md -->
 # Evaluation
 
-> **Status: the harness exists; the labels do not.** The four numbers are
-> settled — they are named in `docs/01-thesis.md` and each is assigned to
-> exactly one phase by `docs/14-roadmap.md`. `eval/` is now a workspace package
-> with the corpus manifest, the label format, the scoring functions, the
-> regression rules and `pnpm eval check` running on every pull request. What it
-> does **not** have is a single label, because a system does not grade itself
-> and no human has sat down with the corpus yet. Three of the four bars have no
-> value, and `eval/baselines.json` records them as `null`. Where a target is
+> **Status: the harness exists, runners included; the labels do not.** The
+> four numbers are settled — they are named in `docs/01-thesis.md` and each is
+> assigned to exactly one phase by `docs/14-roadmap.md`. `eval/` is now a
+> workspace package with the corpus manifest, the label, query and edit-corpus
+> formats, the scoring functions, the regression rules, runners for
+> extraction, retrieval and reconciliation, and `pnpm eval check` running on
+> every pull request. What it does **not** have is a single label, because a
+> system does not grade itself and no human has sat down with the corpus yet —
+> so each runner skips, loudly, naming the human input it waits for. Three of
+> the four bars have no value, and `eval/baselines.json` records them as
+> `null`. Where a target is
 > unknown this document says unknown rather than choosing one: choosing one
 > before a corpus exists is precisely the failure `docs/02-principles.md` (10)
 > describes.
@@ -298,7 +301,10 @@ unstable — one bad finding out of eight is 12.5% — so the harness reports it
 with a confidence interval and **refuses to report at all** below a minimum
 number of findings. That minimum is a function of the 5% bar and the interval
 width the decision can tolerate. It is computed once the corpus exists. It is
-not guessed here.
+not guessed here — and not guessed in code either: the harness takes it as
+required configuration, `STANDFAST_EVAL_MIN_FINDINGS`, with no default, the
+same shape as the ratification CLI's `--older-than`. Until a human provides
+it, `pnpm eval reconciliation` prints the counts and withholds the rate.
 
 The false-negative rate is measured and published beside it, and never
 optimised. `docs/07-reconciliation.md` lists six tuning levers that all cost
@@ -689,6 +695,8 @@ network path to anything of ours.
 | `pnpm eval skeleton <doc> <who>` | a blank label set for one document |
 | `pnpm eval score <run-file>` | the metrics of an adjudicated run |
 | `pnpm eval extraction` | the extractor over the corpus |
+| `pnpm eval retrieval <scored-run>` | the labelled queries at each committed budget, over atoms a human accepted |
+| `pnpm eval reconciliation <findings>` | a checking session's findings against the labelled edit corpus |
 
 Exit codes: `0` success, including a loud skip; `1` a failure or a regression;
 `2` a usage error.
@@ -810,7 +818,9 @@ Recorded so each question is asked once.
   resulting confidence interval is reported, and if it is wider than the
   decisions it has to support, the corpus grows.
 - **The minimum finding count** below which the reconciliation false-positive
-  rate is not reported at all.
+  rate is not reported at all. The harness already demands it as
+  `STANDFAST_EVAL_MIN_FINDINGS` and refuses to default it; what remains open
+  is the value.
 - **The noise band** for regression gating, per metric.
 - **Whether the held-out split is per-metric or shared**, and how many reported
   runs retire it.

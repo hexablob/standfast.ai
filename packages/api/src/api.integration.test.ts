@@ -1575,6 +1575,77 @@ describe("ratification", () => {
     expect(page.total).toBeLessThan(queueIds.length);
   });
 
+  /**
+   * Reading-order item 6 (`docs/15-ratification.md`): the incumbent rides the
+   * queue item, computed at read time, and only when a canonical atom's
+   * similarity falls in the judge band `[0.80, 0.93)`. Embeddings are written
+   * through the superuser because the fixture's atoms were proposed over the
+   * API, which — correctly — accepts no vectors.
+   */
+  it("serves the canonical near neighbour in the judge band, and only then", async () => {
+    // Unit vectors with a chosen angle, so the similarity is exact: the
+    // candidate is e1, the canonical atom cos·e1 + sin·e2.
+    const unit = (cos: number) => {
+      const v = new Array(1024).fill(0);
+      v[0] = cos;
+      v[1] = Math.sqrt(1 - cos * cos);
+      return `[${v.join(",")}]`;
+    };
+    const fetchIncumbents = async () => {
+      const res = await call(`/v1/projects/${queue.projectId}/queue`, humanKey);
+      expect(res.status).toBe(200);
+      const page = (await res.json()) as {
+        items: {
+          id: string;
+          incumbent: {
+            id: string;
+            statement: string;
+            similarity: number;
+          } | null;
+        }[];
+      };
+      return new Map(page.items.map((item) => [item.id, item.incumbent]));
+    };
+
+    const db = await admin();
+    try {
+      await db.query("update atoms set embedding = $1 where id = $2", [
+        unit(1),
+        queueIds[0],
+      ]);
+      // 0.85 sits inside the band, so the incumbent is on screen.
+      await db.query("update atoms set embedding = $1 where id = $2", [
+        unit(0.85),
+        queueCanonicalId,
+      ]);
+
+      const inBand = await fetchIncumbents();
+      const shown = inBand.get(queueIds[0] ?? "");
+      expect(shown?.id).toBe(queueCanonicalId);
+      expect(shown?.statement).toBe("Metrics are sampled once a second.");
+      expect(shown?.similarity).toBeCloseTo(0.85, 6);
+      // No embedding on the candidate: no near neighbour, nothing to show,
+      // and the reviewer is not asked to go looking.
+      expect(inBand.get(queueIds[1] ?? "")).toBeNull();
+
+      // At 0.95 the dedup pass would have suppressed the candidate — above
+      // the band nothing is served. Below it the atoms are just distinct.
+      for (const outside of [0.95, 0.5]) {
+        await db.query("update atoms set embedding = $1 where id = $2", [
+          unit(outside),
+          queueCanonicalId,
+        ]);
+        expect((await fetchIncumbents()).get(queueIds[0] ?? "")).toBeNull();
+      }
+    } finally {
+      await db.query(
+        "update atoms set embedding = null where id = any($1::uuid[])",
+        [[queueIds[0], queueCanonicalId]],
+      );
+      await db.end();
+    }
+  });
+
   // 200 with nothing, not 404: RLS answers "no rows" for the same reason the
   // egress list does, and the project id is not the caller's to confirm.
   it("never shows another org's atoms", async () => {

@@ -1,5 +1,27 @@
 import { sectionHash } from "./hash.js";
 
+/**
+ * The largest body a Markdown document may carry.
+ *
+ * This is **input validation at a trust boundary, not an availability
+ * control**. `docs/13-threat-model.md` puts denial of service out of scope,
+ * and a number in a schema is not what would stand between this process and a
+ * flood. What it is for is that `PUT /v1/projects/{projectId}/documents`
+ * accepted an unbounded string, and everything downstream of it — the
+ * sectioner below, the hashes, the span arithmetic, the extraction pass — was
+ * sized for a document a human wrote to govern a codebase. A million
+ * characters is roughly 250,000 words, several times the longest document
+ * anyone has written for that purpose. Past this bound the payload is not a
+ * document that was written; it is a mistake or a probe, and both are better
+ * refused at the edge with a typed 400 than carried into the pipeline.
+ *
+ * Unlike the offsets below, this is a ceiling rather than a coordinate: it
+ * never has to agree with Postgres `substring`, so it is counted in whatever
+ * unit the validator counts and the code-point/UTF-16 distinction that
+ * matters for `start` and `end` does not matter here.
+ */
+export const DOCUMENT_BODY_MAX_CHARS = 1_000_000;
+
 export type Section = {
   ordinal: number;
   headingPath: string[];

@@ -1,3 +1,4 @@
+import { DEDUP_BANDS } from "@standfast/core";
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Db } from "../client.js";
 import { PAGE_TOTAL, type Page, type Paged, paged } from "../pagination.js";
@@ -38,6 +39,70 @@ const arrivedAt = sql<Date>`coalesce((
 ), ${atoms.createdAt})`;
 
 /**
+ * The canonical atom a candidate may replace, when one is close enough to ask.
+ *
+ * Three fields because the reviewer's question is "is this the same claim" —
+ * the incumbent's statement answers it, the id is what `--supersedes` takes,
+ * and the similarity says how hard dedup was leaning when it let the candidate
+ * through.
+ */
+export type QueueIncumbent = {
+  readonly id: string;
+  readonly statement: string;
+  readonly similarity: number;
+};
+
+/**
+ * Reading-order item 6 from `docs/15-ratification.md`: the incumbent, if one
+ * exists. The nearest **canonical** atom in the project whose similarity falls
+ * in the judge band — `[0.80, 0.93)` from `docs/05-extraction.md`, imported
+ * from `DEDUP_BANDS` rather than restated, so the surface and the dedup pass
+ * cannot disagree about where "near" begins. At or above `duplicateFrom` the
+ * pass would have suppressed the candidate, so nothing sits there to show.
+ *
+ * Computed at read time, not persisted. The nearest canonical atom changes
+ * every time one is ratified, retired or superseded, so a stored answer is
+ * stale the moment the queue moves — and a backfill would be answering
+ * yesterday's question. The judge band's verdict during extraction is a
+ * different fact (why the candidate survived) and stays where it is.
+ *
+ * `jsonb_build_object`, so the three fields travel as one nullable column and
+ * an absent incumbent is a plain SQL NULL. A candidate with no embedding falls
+ * out through the band predicates — `<=>` against NULL is NULL, and NULL is in
+ * no band — which is the document's answer spelled in SQL: no near neighbour,
+ * no incumbent shown, and the reviewer is not asked to go looking.
+ *
+ * The tie-break mirrors `nearestAtom` in extractions.ts, and for the same
+ * reason: two canonical atoms at the same distance must not swap between two
+ * renders of the same queue item.
+ *
+ * The cost, stated rather than discovered: one index probe per row returned,
+ * paid on every queue read even though only `standfast next` renders the
+ * result. At a page of twenty, against a human-paced surface, that is not a
+ * number worth optimising for — and it is the honest shape of the feature,
+ * since the answer is only correct if it is computed when it is read. If a
+ * page ever grows large enough for it to matter, the lever is to compute it
+ * for the head of the queue alone, not to cache an answer that goes stale
+ * every time an atom is ratified.
+ */
+const incumbent = sql<QueueIncumbent | null>`(
+  select jsonb_build_object(
+    'id', c.id,
+    'statement', c.statement,
+    'similarity', 1 - (c.embedding <=> ${atoms.embedding})
+  )
+  from atoms c
+  where c.project_id = ${atoms.projectId}
+    and c.status = 'canonical'
+    and c.id <> ${atoms.id}
+    and c.embedding is not null
+    and 1 - (c.embedding <=> ${atoms.embedding}) >= ${DEDUP_BANDS.judgeFrom}
+    and 1 - (c.embedding <=> ${atoms.embedding}) < ${DEDUP_BANDS.duplicateFrom}
+  order by c.embedding <=> ${atoms.embedding} asc, c.created_at asc, c.id asc
+  limit 1
+)`;
+
+/**
  * What the reviewer is shown, in one row.
  *
  * `docs/15-ratification.md` fixes the reading order — where it came from, then
@@ -68,6 +133,8 @@ export type QueueItem = {
   readonly sectionHeadingPath: string[];
   /** Verbatim and complete. Never abridged here — see the type's comment. */
   readonly sectionBody: string;
+  /** Reading-order item 6, or null — see the `incumbent` fragment above. */
+  readonly incumbent: QueueIncumbent | null;
 };
 
 /**
@@ -129,6 +196,7 @@ export async function listQueue(
       sectionOrdinal: documentSections.ordinal,
       sectionHeadingPath: documentSections.headingPath,
       sectionBody: documentSections.body,
+      incumbent,
       pageTotal: PAGE_TOTAL,
     })
     .from(atoms)

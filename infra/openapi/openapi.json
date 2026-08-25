@@ -264,7 +264,8 @@
             "maxLength": 500
           },
           "body": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1000000
           }
         },
         "required": [
@@ -1072,6 +1073,28 @@
           "sectionBody": {
             "type": "string",
             "description": "The whole section. Never truncated."
+          },
+          "incumbent": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "statement": {
+                "type": "string"
+              },
+              "similarity": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "statement",
+              "similarity"
+            ],
+            "description": "The canonical near neighbour from the dedup judge band, or null."
           }
         },
         "required": [
@@ -1091,7 +1114,8 @@
           "sectionId",
           "sectionOrdinal",
           "sectionHeadingPath",
-          "sectionBody"
+          "sectionBody",
+          "incumbent"
         ]
       },
       "Ratification": {

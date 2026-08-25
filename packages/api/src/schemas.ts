@@ -2,6 +2,7 @@ import { z } from "@hono/zod-openapi";
 import {
   ATOM_REJECT_REASONS,
   ATOM_STATUSES,
+  DOCUMENT_BODY_MAX_CHARS,
   EGRESS_PURPOSES,
   FILE_PATH_MAX_CHARS,
   FINDING_STATUSES,
@@ -79,7 +80,11 @@ export const PutDocumentSchema = z
   .object({
     path: z.string().min(1).max(1024),
     title: z.string().max(500).nullish(),
-    body: z.string(),
+    // The bound lives in `packages/core` with the sectioner it protects, and
+    // reaches the wire — and the OpenAPI artifact — from here. `app.ts` also
+    // mounts a byte limit an order of magnitude above it, so this cap is what
+    // a real client hits and that one is only ever the backstop.
+    body: z.string().max(DOCUMENT_BODY_MAX_CHARS),
   })
   .openapi("PutDocument");
 
@@ -255,6 +260,25 @@ export const QueueItemSchema = z
     sectionOrdinal: z.number().int(),
     sectionHeadingPath: z.array(z.string()),
     sectionBody: z.string().describe("The whole section. Never truncated."),
+    /**
+     * The canonical atom this candidate may replace — reading-order item 6 in
+     * `docs/15-ratification.md`, computed at read time against the judge band
+     * from `docs/05-extraction.md`. On the same response because `supersedes`
+     * is offered only when an incumbent is on screen, and a second round trip
+     * is how it stops being on screen. Null when the candidate has no
+     * embedding or no canonical atom falls in the band: the reviewer is not
+     * asked to go looking.
+     */
+    incumbent: z
+      .object({
+        id: z.uuid(),
+        statement: z.string(),
+        similarity: z.number(),
+      })
+      .nullable()
+      .describe(
+        "The canonical near neighbour from the dedup judge band, or null.",
+      ),
   })
   .openapi("QueueItem");
 

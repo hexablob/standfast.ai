@@ -67,7 +67,10 @@ export function expectedAtomId(section: SectionLabel, index: number): string {
 export function loadLabels(root: string): LabelSet[] {
   const directory = join(root, "labels");
   const files = readdirSync(directory)
-    .filter((name) => name.endsWith(".json"))
+    // `edits.<labeller>.json` are the reconciliation corpus's verdicts and
+    // carry a different schema (edits.ts). Section label files always contain
+    // `__` (a document id has a `/`), so the prefixes cannot collide.
+    .filter((name) => name.endsWith(".json") && !/^edits\./.test(name))
     .sort();
 
   return files.map((name) => {

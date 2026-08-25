@@ -45,14 +45,15 @@ See `docs/13-threat-model.md`.
 
 ## Supply chain
 
-GitHub Actions are pinned by commit SHA and container images by digest. Release
-publishing is configured for npm provenance attestations, and nothing has been
-published yet — so that is a promise about the first release, not a property of
-an artifact you can check today. A report that some pin has silently become
-mutable is in scope.
+GitHub Actions are pinned by commit SHA and container images by digest. Every
+release tag runs a job that packs the release tarballs, attests their build
+provenance, and verifies each tarball with `gh attestation verify` — including
+a negative check in which a deliberately corrupted copy must fail
+verification. No artifact is published to any registry. A report that some pin
+has silently become mutable is in scope.
 
 ## Scope
 
-This repository, its published `@standfast/*` packages, and the CI that builds
+This repository, its `@standfast/*` packages, and the CI that builds
 them. Findings in third-party dependencies should go upstream first; tell us
 too if Standfast's use of them makes the impact worse.

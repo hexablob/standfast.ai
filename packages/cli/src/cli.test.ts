@@ -332,6 +332,22 @@ describe("ratification", () => {
     expect(stderr).toContain("--kind must be one of");
   });
 
+  it("refuses a skip that is not a count", async () => {
+    // The same shapes `pageQuery` refuses for --limit/--offset, including the
+    // blank: `Number("")` is 0, and a blank flag is not a request for the
+    // head. The `=` form, because `parseArgs` reads a bare `-1` as an option.
+    for (const bad of ["x", "-1", "1.5", ""]) {
+      const { code, stderr } = await onStderr(
+        "next",
+        "--project",
+        "p",
+        `--skip=${bad}`,
+      );
+      expect(code).toBe(2);
+      expect(stderr).toContain("--skip must be a non-negative integer");
+    }
+  });
+
   it("refuses ratification without --older-than", async () => {
     // The metric has no default window on purpose: docs/02-principles.md (10)
     // leaves the bar unchosen, and a default here would become it.

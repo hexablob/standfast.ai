@@ -28,7 +28,11 @@ export {
   SECTIONER_VERSION,
 } from "./extractor-version.js";
 export { contentHash, sectionHash } from "./hash.js";
-export { type Section, sectionMarkdown } from "./markdown.js";
+export {
+  DOCUMENT_BODY_MAX_CHARS,
+  type Section,
+  sectionMarkdown,
+} from "./markdown.js";
 export { MMR_LAMBDA, type MmrCandidate, mmrSelect } from "./mmr.js";
 export {
   assemblePack,

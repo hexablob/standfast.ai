@@ -11,9 +11,10 @@
 > commands; migration `0010` then closed org-consistency across the whole schema
 > with composite foreign keys. None of the three **can exit on that**, because
 > all three wait on the same thing: a labelled corpus, written blind by a human,
-> that does not exist. Phases 4 and 5 are decided as scope and as ordering and
-> neither has started; what exists of phase 4 is vocabulary rather than
-> behaviour, in migrations `0011` and `0012`, and nothing writes either yet. The
+> that does not exist. Phase 4 is in progress: the ratification routes and
+> commands, the one-shot `standfast sync`, the scripted end-to-end in CI and
+> the tag-triggered release job exist, and registry publication deliberately
+> waits. Phase 5 has not started. The
 > phase numbers are a contract — `CLAUDE.md` and `docs/00-handoff.md` cite them
 > — so they are not renumbered, ever.
 >
@@ -460,16 +461,18 @@ queue does not grow without bound.
 
 **Exit criterion.**
 
-None of the three is met. Criterion 2's *machinery* exists, which is not the
-same thing and is worth keeping apart.
+Criteria 1 and 3 are met. Criterion 2 is not: its *machinery* exists, which is
+not the same thing and is worth keeping apart.
 
 1. A scripted end-to-end from a clean machine, run in CI: install, sync a
-   folder, open a session, receive a context pack, ratify an atom. **Not met.**
-   Four of the five steps are reachable: `standfast queue`, `next`, `ratify`,
-   `reject`, `retire` and `ratification` exist, and a session already receives a
-   context pack. Syncing a folder has nothing at all, because the daemon does not
-   exist — and nothing runs the sequence end to end from a clean machine, which
-   is the part the criterion is actually about.
+   folder, open a session, receive a context pack, ratify an atom. **Met.**
+   `scripts/e2e.sh` runs the sequence against an empty database: install,
+   `standfast sync --accept` on a fixture folder — the one-shot from
+   `packages/cli/src/sync.ts`, not a daemon — the worker extracting a
+   provisional atom, `standfast ratify`, and a `SessionStart` hook whose
+   context pack must contain the fixture's sentence. CI runs the same script
+   as its `e2e` job, so what a human runs locally and what the gate runs are
+   one file that cannot drift apart.
 2. Ratification throughput computed from `atom_events` — median time from
    `proposed` to a decision, and the share of provisional atoms older than a
    chosen age. The table has existed since migration `0000` precisely so this
@@ -485,7 +488,14 @@ same thing and is worth keeping apart.
    the route and the CLI alike: the bar is unchosen, and a default anywhere on
    that path would quietly become it. What is missing is a human choosing the
    number, not code.
-3. A release job that fails on an unsigned or unattested artifact. **Not met.**
+3. A release job that fails on an unsigned or unattested artifact. **Met.**
+   `.github/workflows/release.yml` runs on every tag: it packs the three
+   Apache-licensed packages, attests build provenance through SHA-pinned
+   actions, verifies every tarball with `gh attestation verify`, and then
+   corrupts a copy by one byte and requires verification to refuse it —
+   signing is easy, and refusing the unsigned is the property the criterion
+   is about. The job deliberately contains no `npm publish`; the first tag
+   will be its first run.
 
 **And the rejection reason is why criterion 2 could be honest at all.** Phase 4
 added a reject route because clearance counted half a reviewer's work without

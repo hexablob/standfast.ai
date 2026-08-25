@@ -87,6 +87,22 @@ jobs:
       - name: Evaluation corpus and labels
         run: pnpm eval check
 
+      # The two measuring runners, exercised for their refusals. With no human
+      # labels, no query set, no edit corpus and no chosen minimum, both must
+      # skip loudly and exit 0 — a runner that quietly reported a number here
+      # would be reporting one nobody measured. This step fails the day either
+      # one starts pretending it can answer.
+      #
+      # It also fails, deliberately, on the day the labels arrive: a query set
+      # with no run file to score is a usage error, not a skip. That failure is
+      # the tripwire. Whoever writes the first labels has to decide then and
+      # there how the real measurement runs in CI, rather than leaving a runner
+      # that is green because it never runs.
+      - name: Evaluation runners skip without a corpus
+        run: |
+          pnpm eval retrieval
+          pnpm eval reconciliation
+
       - name: OpenAPI artifact has not drifted
         run: |
           pnpm openapi:generate

@@ -35,7 +35,7 @@ export const USAGE = `standfast — a shared knowledge layer for coding agents
   standfast atom ls   --project <id> [--limit <n>] [--offset <n>]
 
   standfast queue     --project <id> [--kind <kind>] [--document <id>] [--limit <n>] [--offset <n>]
-  standfast next      --project <id> [--kind <kind>] [--document <id>]
+  standfast next      --project <id> [--kind <kind>] [--document <id>] [--skip <n>]
   standfast ratify    <atom-id> [--supersedes <atom-id>]
   standfast reject    <atom-id> [--reason <reason>] [--note <text>]
   standfast retire    <atom-id>
@@ -131,6 +131,9 @@ export const OPTIONS = {
   // a number and refuses it if it is not one.
   limit: { type: "string" },
   offset: { type: "string" },
+  // `next` only. A count like the two above, validated the same way in
+  // commands.ts; it rides the queue route's `offset` so nothing is persisted.
+  skip: { type: "string" },
 } as const;
 
 function parse(argv: string[]) {
