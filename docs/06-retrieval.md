@@ -1,15 +1,22 @@
 <!-- docs/06-retrieval.md -->
 # Retrieval
 
-> **Status: designed, not implemented.** Phase 2. Nothing described here
-> exists. Phase 1a added `atoms.embedding vector(1024)` and phase 1 writes
-> vectors into it, but there is no index beyond the btrees in
-> `0000_foundation.sql` and no `context` or `search` tool. The pipeline shape
-> — four candidate generators, RRF fusion at k=60, a reranker, assembly under
-> a token budget with MMR at λ≈0.7 — is settled in `docs/00-handoff.md`. Every
-> constant in it is a default to be recalibrated on a corpus that does not yet
-> exist. The one thing this document settles that was previously open is how
-> the reranker survives principle 4; see *Two model calls, named*.
+> **Status: built, except the reranker, and unmeasured.** Phase 2 shipped the
+> pipeline described here. Migration `0007` adds the four indexes it needs —
+> `atoms_search_vector_idx`, `atoms_trigram_idx`, `atoms_embedding_hnsw_idx`
+> and `atoms_structural_idx`. The four candidate generators are in
+> `packages/db/src/repositories/retrieval.ts`, RRF fusion at k=60 in
+> `packages/core/src/rrf.ts`, MMR in `mmr.ts` and budgeted assembly in
+> `pack.ts`; `context` and `search` are MCP tools, and the `SessionStart` and
+> `UserPromptSubmit` hooks call them. **The cross-encoder reranker is not
+> built**, and no deployment can turn one on:
+> `packages/core/src/egress.ts` refuses a `reranking` allowlist entry outright.
+> A response names the stages that did not run in `skipped`, so a caller is
+> told rather than left to infer. Every constant here — k=60, λ≈0.7, the
+> generator limits — is still the default it was chosen as, because the corpus
+> that would recalibrate it does not exist. **No phase-2 exit criterion is
+> claimed**: retrieval precision under budget and the declared p95 are both
+> unmeasured.
 
 ## What retrieval owes
 

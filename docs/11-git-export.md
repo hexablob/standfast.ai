@@ -1,12 +1,12 @@
 <!-- docs/11-git-export.md -->
 # Git export
 
-> **Status: designed, not implemented.** `standfast export` exists today and is
-> described as existing where it is: it writes document bodies to a directory,
-> and `safeJoin` refuses a server-supplied path that escapes that directory.
-> Everything else here — the atom projection, the manifest, the owned-directory
-> semantics, the idempotence contract — is decided and unbuilt. It belongs to
-> phase 4 (`docs/14-roadmap.md`).
+> **Status: implemented.** `standfast export` lives in
+> `packages/cli/src/export.ts` and does what this document says: documents
+> byte-for-byte, the atom projection, the manifest, the owned-directory
+> semantics and the idempotence contract, with `safeJoin` still refusing a
+> server-supplied path that escapes the directory. Built in phase 4
+> (`docs/14-roadmap.md`).
 
 ## Why this exists
 
@@ -25,13 +25,14 @@ in a repository they control. That answer is only credible if it exists before
 anyone asks, which is why a one-shot version shipped in phase 0 rather than
 being scheduled.
 
-It is also cheap. The whole of what exists today is forty lines of CLI, and the
-design below is not much more. A feature this cheap that answers a question
+It is also cheap. The whole of what exists today is `exportAll` and the two
+helpers it leans on, and the design below is not much more. A feature this cheap that answers a question
 this expensive should not be an item on a roadmap.
 
 ## What exists today
 
-`packages/cli/src/commands.ts`, `exportAll`. Real, tested, shipped in phase 0.
+`packages/cli/src/export.ts`, `exportAll`. The one-shot version shipped in
+phase 0; phase 4 completed it to this document.
 
 ```
 standfast export [directory]        # default: ./standfast-export
@@ -39,16 +40,16 @@ standfast export [directory]        # default: ./standfast-export
 
 It lists projects, lists each project's documents, and writes each `doc.body`
 to `<directory>/<project-slug>/<doc.path>`, creating parent directories as it
-goes. It reports a count. With `--json` it emits `{ target, written }`, which
-matters later — see *Git*.
+goes. It reports a count. With `--json` it emits `{ target, written, swept,
+exportedAt }`, which matters later — see *Git*.
 
 `safeJoin` (same file) resolves each destination and refuses anything that
 lands outside the export directory. `packages/cli/src/cli.test.ts` asserts the
 refusals.
 
-That is all. It exports no atoms, writes no manifest, deletes nothing, and is
-not idempotent against a changed knowledge base. The rest of this document says
-what phase 4 adds and why.
+The rest of this document says what the export does beyond that — the atom
+projection, the manifest, deletion, the idempotence contract — and why each
+came out the way it did.
 
 ## What is exported
 
@@ -60,7 +61,7 @@ what phase 4 adds and why.
 | Sections | as structure | headings and `section_hash` group the atoms |
 | `atom_events` | no | see *Considered and declined* |
 | Embeddings | no | a vector is a number nobody can read without our model |
-| Reconciliation findings | not yet | phase 3 owns the table; see *Open* |
+| Reconciliation findings | not yet | the tables exist (`0009`); the format is open |
 | API keys | no | — |
 | Source code | no | none is held (`docs/01-thesis.md`, invariant 3) |
 
@@ -148,14 +149,14 @@ readable.
 
 **No timestamp anywhere in a tracked file.** See *Idempotence*.
 
-### One prerequisite, named
+### One prerequisite, met
 
-`source_span` is in the wire allowlist and in `CreateAtom`, and is **not** on
-the `Atom` response schema in `infra/openapi/openapi.json` today. Exporting the
-span therefore requires adding it to the read shape — an OpenAPI diff and an
-SDK regeneration, both already gated by CI, on a column the allowlist already
-permits. Small, but it is a change to a committed artifact and not a detail to
-discover during implementation.
+The `Atom` response schema in `infra/openapi/openapi.json` now serves
+everything the projection prints: `source_quote` and `source_span` on every
+read, `superseded_by` always present and nullable, and the ratifier's name
+and kind on the list route. The OpenAPI diff and SDK regeneration this
+paragraph once asked for have happened, gated by CI as any change to the
+committed artifact is.
 
 ## The layout on disk
 
@@ -399,8 +400,9 @@ make the export testable.
 
 ## How this is checked
 
-Statements a machine can check, in the spirit of `docs/14-roadmap.md`. None of
-them exist yet beyond the three `safeJoin` tests in
+Statements a machine can check, in the spirit of `docs/14-roadmap.md`. All six
+run as integration tests in `packages/api/src/cli.integration.test.ts`, and
+the path refusals, the atom ordering and the ownership sentinel have units in
 `packages/cli/src/cli.test.ts`.
 
 1. Two consecutive exports against an unchanged fixture produce byte-identical
@@ -442,7 +444,8 @@ Recorded so each question is asked once.
   diff grows without ever becoming readable. If it is ever exported it belongs
   in JSONL next to the manifest, not in the projection files.
 - **Exporting embeddings.** Model-version-specific floats, useless outside the
-  model that produced them — and phase 1 does not exist yet.
+  model that produced them. Phase 1 has shipped, so the question is live rather
+  than hypothetical, and the answer has not changed.
 - **An `export` MCP tool.** Already declined in `docs/08-mcp-server.md`: it is
   a human operation, not something an agent does mid-task, and its description
   would spend session tokens in every session to describe a command nobody
@@ -463,13 +466,14 @@ Recorded so each question is asked once.
   filesystems, where two distinct `doc.path` values can collide on disk.
 - **Reconciliation findings.** They are verdicts and `path:line` pointers about
   the customer's own code, and a customer leaving should take them with them.
-  The table does not exist (phase 3), so neither does the format. One
-  constraint is fixed in advance: no field of it carries source.
-- **Scale.** The current export is one call per project plus one document list
-  each, holding bodies in memory, against an API that does not paginate —
-  itself open in `docs/03-architecture.md`. Nobody has run it against a corpus
-  large enough to know where it stops being fine, and inventing a number here
-  would be inventing a benchmark.
+  The tables exist — `reconciliation_runs` and `reconciliation_findings`,
+  migration `0009` — and the format does not. One constraint is fixed in
+  advance: no field of it carries source.
+- **Scale.** The current export is a paged walk of the projects plus a paged
+  walk of each project's documents — `pageAll` in `packages/cli/src/commands.ts`
+  follows every page — holding each body in memory before writing it. Nobody
+  has run it against a corpus large enough to know where it stops being fine,
+  and inventing a number here would be inventing a benchmark.
 - **Whether an export should be signed**, so a customer can prove a tree came
   from their Standfast. Principle 12 covers the release supply chain, not exported
   data, and there is no consumer for such a signature today.

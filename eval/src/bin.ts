@@ -29,6 +29,7 @@ const USAGE = `pnpm eval <command>
   score <run-file>            compute the metrics of an adjudicated run
   extraction                  run the extractor over the corpus
   retrieval                   run the labelled queries under the token budget
+  reconciliation              measure the reconciler's false-positive rate
 
 Everything deterministic runs everywhere. Anything that needs a model or a
 database skips loudly rather than reporting a pass it did not earn.
@@ -359,7 +360,7 @@ async function extraction(): Promise<number> {
   return 1;
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
 
   switch (command) {
@@ -382,6 +383,22 @@ async function main(argv: readonly string[]): Promise<number> {
       );
       return 0;
     }
+    case "reconciliation": {
+      // Unconditional, where `retrieval` at least consults a precondition:
+      // there is nothing here a precondition could check. A database and three
+      // real ports would not make this measurable, because what is missing is
+      // a corpus of edits and the person who marked which findings on it were
+      // wrong. And `reconciliation_false_positive_rate` is the one metric in
+      // `baselines.json` carrying `barIsHardThreshold` — the first number this
+      // command ever prints is a number the product can be killed by, so it
+      // waits for the labeller rather than meeting them halfway.
+      heading("reconciliation_false_positive_rate");
+      skipped(
+        "reconciliation_false_positive_rate",
+        "phase 3 owns reconciliation; no corpus of edits exists and nobody has labelled one. The bar is 5% and it is a hard threshold, so a number produced without a human labeller would measure how hard someone tried, not whether the reconciler works",
+      );
+      return 0;
+    }
     case undefined:
     case "--help":
     case "-h":
@@ -393,14 +410,23 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2))
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    // A thrown error here is a runner refusal — an unlabelled slice, a database
-    // it will not write to. Reported as a failure with its own message rather
-    // than a stack, because the message is the instruction.
-    failure(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
+// Only the process this file *is* runs the CLI. `main` is exported so a test
+// can drive one command and read the code it returns; without the guard the
+// import alone would run the CLI against the test runner's argv and set an exit
+// code out from under it.
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error: unknown) => {
+      // A thrown error here is a runner refusal — an unlabelled slice, a
+      // database it will not write to. Reported as a failure with its own
+      // message rather than a stack, because the message is the instruction.
+      failure(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
+}

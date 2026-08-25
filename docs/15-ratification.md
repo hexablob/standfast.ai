@@ -1,12 +1,26 @@
 <!-- docs/15-ratification.md -->
 # Ratification
 
-> **Status: planned.** Phase 4 owns this and phase 4 has not started. There is
-> no queue, no reject route, no supersede route and no flagging heuristic.
-> `POST /v1/atoms/{atomId}/ratify` exists and is half of one of the four
-> decisions below. Where the surface lives — CLI, web dashboard, or inside the
-> editor — is still open and `docs/14-roadmap.md` owns that choice; everything
-> here is behaviour, and behaviour is venue-independent.
+> **Status: built, unmeasured, and one piece short.** Phase 4 owns this and is
+> under way. Migration `0011` adds the `atom_reject_reason` enum
+> and the nullable `reason` and `reason_note` columns on `atom_events`;
+> migration `0012` adds `retired` as a fifth `atom_status` and a fifth
+> `atom_event`; `rejectAtom`, `retireAtom` and `listQueue` exist in
+> `packages/db`; migration `0013` adds `actor_kind` to `atom_events` and the
+> `atom_events_decision_is_human` check, so every event but `proposed` must be
+> a human's. **The HTTP surface now reaches all of it**, and only the flagging
+> heuristic does not exist: `POST /v1/atoms/{atomId}/reject`,
+> `POST /v1/atoms/{atomId}/retire`, `GET /v1/projects/{projectId}/queue` and
+> `GET /v1/projects/{projectId}/ratification` are live, and
+> `POST /v1/atoms/{atomId}/ratify` takes an optional `supersedes` — as a query
+> parameter rather than a body field, because ratification has always been a
+> bodyless `POST` and an optional JSON body turns the common path into a 400.
+>
+> **No exit criterion for phase 4 is met.** Throughput is computable and
+> uncomputed: the age threshold is a required argument with no default at every
+> layer, because the bar is unchosen and a default would quietly become it.
+> The venue is settled — **the CLI**, where the reviewer
+> already is — and the behaviour here is what that surface has to implement.
 
 ## Why this document exists
 
@@ -138,7 +152,7 @@ not exist rather than that it is off by default.
 | Decision | Status written | Event written | Exists |
 | --- | --- | --- | --- |
 | Ratify | `provisional` → `canonical` | `ratified` | route yes, surface no |
-| Reject | `provisional` → `rejected` | `rejected` | no |
+| Reject | `provisional` → `rejected` | `rejected` | schema and `rejectAtom`; no route, no command |
 | Ratify-superseding | candidate → `canonical`, incumbent → `superseded` | `ratified` and `superseded` | no |
 | Skip | nothing | nothing | no |
 
@@ -157,7 +171,10 @@ a queue that cannot be drained.
 
 The reason is **optional and structured**: a closed vocabulary — *not true*,
 *duplicate*, *not a decision*, *wrong severity*, *the document is wrong* — plus
-optional free text. Two consequences, and the second is the interesting one:
+optional free text. That is now the `atom_reject_reason` enum with those five
+values, alongside nullable `reason` and `reason_note` columns on `atom_events`
+(migration `0011`). Nothing writes them yet. Two consequences, and the second
+is the interesting one:
 
 - Optional, because a required field converts a decision into a form, and the
   metric wants the cheap decision to be cheap. A reviewer who must justify a
@@ -288,7 +305,8 @@ will be proposed are named here so each is argued once:
 | `POST /v1/atoms/{atomId}/reject` | clearance counts half the work without it |
 | `supersedes` on the ratify request | the only route that writes `superseded` |
 | `GET /v1/projects/{projectId}/queue` | ordering above; paginated per `docs/03-architecture.md` |
-| A nullable structured `reason` on `atom_events` | insert-only, so the append-only grant is untouched |
+| ~~A nullable structured `reason` on `atom_events`~~ — landed as migration `0011` | insert-only, so the append-only grant is untouched |
+| ~~A `retired` status and event~~ — landed as migration `0012` | the withdrawal decision, kept out of `rejected` so the precision corpus stays clean |
 | Flag-fire records paired with the decision | the precision corpus principle 10 requires |
 
 No MCP tool, no change to the six specified in `docs/08-mcp-server.md`, and no
@@ -313,22 +331,24 @@ the thing is a decision rather than a result.
 
 ## Open
 
-- **Nothing retires a canonical atom without a successor.** `superseded`
-  requires one by definition, `rejected` is reachable only from `provisional`,
-  and `docs/05-extraction.md` says an atom the new extractor no longer produces
-  is *flagged for human review and nothing else*. So the queue will contain an
-  item type for which no decision exists. The clean shape is either a
-  `canonical → rejected` transition for a human actor, or a fifth status; both
-  are a migration and a change to the status vocabulary, which is the owner's
-  call and not this document's. Naming it is not optional — it is the first
-  thing a reviewer will hit that the model cannot express.
+- **Retiring a canonical atom with no successor is a fifth status, `retired`.**
+  Decided, and in the schema as of migration `0012`, which adds `retired` to
+  both `atom_status` and `atom_event`. It is *not* a `canonical → rejected`
+  transition, and the reason is the corpus: `rejected` has to keep meaning
+  "a human said no to a proposal", because that is the signal the
+  extraction-precision corpus measures (`docs/12-evaluation.md`). Folding a
+  withdrawal into it would inflate the rejection rate with atoms that never
+  failed. **No route and no command reaches the transition** — the status and
+  `retireAtom` exist, and nothing a human can run calls it.
 - **Whether the queue can show what an atom would govern.** "These 14 files"
-  is the single most useful fact for judging a `constraint`, and it does not
-  exist until phase 2 retrieval does. Whether phase 4 ships without it or
-  waits is undecided.
-- **Whether the rejection vocabulary is fixed or extensible.** Fixed keeps the
-  labels comparable across projects, which is what makes them a corpus.
-  Extensible is what users will ask for within a week.
+  is the single most useful fact for judging a `constraint`. Phase 2 shipped
+  the retrieval it needs, so the fact is now computable; whether phase 4 ships
+  with it or without it is still undecided.
+- **The rejection vocabulary is fixed.** Migration `0011` writes the five
+  labels into the `atom_reject_reason` enum. Fixed keeps them comparable
+  across projects, which is what makes them a corpus; extensible is what users
+  will ask for within a week, and the answer to that is `reason_note`, which
+  is free text and is never counted.
 - **The bar.** `docs/14-roadmap.md` already carries the throughput threshold as
   an open decision and owns it; it is referenced here rather than duplicated,
   because two homes for one number is how they drift.

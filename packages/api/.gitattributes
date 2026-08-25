@@ -1,0 +1,3 @@
+# The content-hash vector fixes exact bytes — CRLF included. Text conversion
+# would silently rewrite the very property the cross-boundary test pins.
+*.vector -text

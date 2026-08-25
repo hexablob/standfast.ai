@@ -242,3 +242,157 @@ describe("atom_events is append-only", () => {
     ).rejects.toThrow(/permission denied/i);
   });
 });
+
+describe("reconciliation is inside the tenant boundary", () => {
+  type Fixture = {
+    project: string;
+    atom: string;
+    actor: string;
+    run: string;
+    finding: string;
+  };
+  const blank: Fixture = {
+    project: "",
+    atom: "",
+    actor: "",
+    run: "",
+    finding: "",
+  };
+  let own = blank;
+  let foreign = blank;
+
+  /**
+   * A whole reconciliation, committed by the superuser so that it exists on
+   * both sides of the boundary. The cross-tenant assertions need a real row to
+   * fail to see; against a uuid that simply is not there they would pass for
+   * the wrong reason. Section body 't', quote 't', span '[0,1)', as above.
+   */
+  const commit = async (admin: Client, orgId: string): Promise<Fixture> => {
+    const project = await admin.query<{ id: string }>(
+      "insert into projects (org_id, name, slug) values ($1, 'R', 'r') returning id",
+      [orgId],
+    );
+    const projectId = project.rows[0]?.id;
+    const document = await admin.query<{ id: string }>(
+      `insert into documents (org_id, project_id, path, body, content_hash)
+       values ($1, $2, 'docs/r.md', 't', 'h-r') returning id`,
+      [orgId, projectId],
+    );
+    const section = await admin.query<{ id: string }>(
+      `insert into document_sections (org_id, document_id, ordinal, heading_path, body, section_hash)
+       values ($1, $2, 0, ARRAY['t'], 't', 'h-r') returning id`,
+      [orgId, document.rows[0]?.id],
+    );
+    const atom = await admin.query<{ id: string }>(
+      `insert into atoms (org_id, project_id, document_id, section_id, statement, kind, source_quote, source_span)
+       values ($1, $2, $3, $4, 's', 'decision', 't', '[0,1)') returning id`,
+      [orgId, projectId, document.rows[0]?.id, section.rows[0]?.id],
+    );
+    const actor = await admin.query<{ id: string }>(
+      "insert into actors (org_id, kind, display_name) values ($1, 'agent', 'r') returning id",
+      [orgId],
+    );
+    const run = await admin.query<{ id: string }>(
+      `insert into reconciliation_runs (org_id, project_id, actor_id, trigger, verdict_count)
+       values ($1, $2, $3, 'explicit', 1) returning id`,
+      [orgId, projectId, actor.rows[0]?.id],
+    );
+    const finding = await admin.query<{ id: string }>(
+      `insert into reconciliation_findings (org_id, project_id, run_id, atom_id, verdict, file_path, status)
+       values ($1, $2, $3, $4, 'honored', 'src/r.ts', 'recorded') returning id`,
+      [orgId, projectId, run.rows[0]?.id, atom.rows[0]?.id],
+    );
+    return {
+      project: projectId ?? "",
+      atom: atom.rows[0]?.id ?? "",
+      actor: actor.rows[0]?.id ?? "",
+      run: run.rows[0]?.id ?? "",
+      finding: finding.rows[0]?.id ?? "",
+    };
+  };
+
+  beforeAll(async () => {
+    const admin = await adminClient();
+    try {
+      own = await commit(admin, data.orgA);
+      foreign = await commit(admin, data.orgB);
+    } finally {
+      await admin.end();
+    }
+  });
+
+  it("sees its own org's runs and findings", async () => {
+    const rows = await asOrg(app, data.orgA, async () => ({
+      runs: await app.query("select id from reconciliation_runs"),
+      findings: await app.query("select id from reconciliation_findings"),
+    }));
+    expect(rows.runs.rowCount).toBeGreaterThan(0);
+    expect(rows.findings.rowCount).toBeGreaterThan(0);
+  });
+
+  it("cannot read another org's runs or findings", async () => {
+    const rows = await asOrg(app, data.orgA, async () => ({
+      runs: await app.query(
+        "select id from reconciliation_runs where id = $1",
+        [foreign.run],
+      ),
+      findings: await app.query(
+        "select id from reconciliation_findings where id = $1",
+        [foreign.finding],
+      ),
+    }));
+    // RLS filters rather than raising, so the assertion is on the row count.
+    expect(rows.runs.rowCount).toBe(0);
+    expect(rows.findings.rowCount).toBe(0);
+  });
+
+  // Every other column names the other org too, so the row is coherent and the
+  // policy is the only thing standing between it and the table.
+  it("cannot write a run into another org", async () => {
+    await expect(
+      asOrg(app, data.orgA, async () =>
+        app.query(
+          `insert into reconciliation_runs (org_id, project_id, actor_id, trigger, verdict_count)
+           values ($1, $2, $3, 'explicit', 0)`,
+          [data.orgB, foreign.project, foreign.actor],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("cannot write a finding into another org", async () => {
+    await expect(
+      asOrg(app, data.orgA, async () =>
+        app.query(
+          `insert into reconciliation_findings (org_id, project_id, run_id, atom_id, verdict, file_path, status)
+           values ($1, $2, $3, $4, 'honored', 'src/r.ts', 'recorded')`,
+          [data.orgB, foreign.project, foreign.run, foreign.atom],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("cannot move a finding across the boundary", async () => {
+    await expect(
+      asOrg(app, data.orgA, async () =>
+        app.query(
+          "update reconciliation_findings set org_id = $1 where id = $2",
+          [data.orgB, own.finding],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  // A run takes no UPDATE grant at all, so the same move is refused a layer
+  // earlier than the policy — a run is a fact about a submission that happened.
+  it("cannot move a run across the boundary", async () => {
+    await expect(
+      asOrg(app, data.orgA, async () =>
+        app.query("update reconciliation_runs set org_id = $1 where id = $2", [
+          data.orgB,
+          own.run,
+        ]),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+  });
+});

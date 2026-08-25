@@ -137,23 +137,59 @@ const text = (result: unknown): string => {
 };
 
 describe("the MCP catalogue", () => {
-  it("advertises the five tools that exist", async () => {
+  it("advertises the six tools that exist", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "context",
       "propose",
       "read",
+      "reconcile",
       "search",
       "status",
     ]);
   });
 
-  // Phase-gated tools are not stubbed. An agent that calls a tool returning
-  // nothing learns not to call it again, and that lesson outlives the stub —
-  // which is why `reconcile` is still absent rather than present and empty.
-  it("does not advertise reconcile yet", async () => {
-    const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).not.toContain("reconcile");
+  /**
+   * The third founding invariant, asserted at the surface an agent actually
+   * touches.
+   *
+   * `reconcile` is the one tool called by an agent that has just finished
+   * reading source, so it is the one place a snippet could plausibly be
+   * offered. The request schema is `.strict()`, which makes an unlisted field a
+   * refusal rather than a field quietly dropped — and quietly dropped is the
+   * dangerous outcome, because it looks like acceptance to whoever sent it.
+   *
+   * This test replaced one asserting `reconcile` was absent. The guard has to
+   * move with the tool, not retire with it.
+   *
+   * The assertion is on the *message*, not merely on `isError`. An earlier
+   * version of this test passed for a reason that had nothing to do with the
+   * extra field — the atom id it used did not exist, so the call failed on a
+   * foreign key — and it would have gone on passing after the guard was
+   * removed. A test that cannot fail for the right reason is not a guard.
+   */
+  it("refuses a reconcile field that could carry code", async () => {
+    const result = await client.callTool({
+      name: "reconcile",
+      arguments: {
+        projectId,
+        items: [
+          {
+            atomId: "00000000-0000-0000-0000-000000000000",
+            verdict: "honored",
+            filePath: "src/a.ts",
+            snippet: "export function f() { return 1; }",
+          },
+        ],
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    const message = JSON.stringify(result.content);
+    // Refused because the field is not on the list, and said so — never
+    // stripped and reported as success, which is what an agent would read as
+    // permission to keep sending it.
+    expect(message).toMatch(/unrecognized|not allowed|snippet/i);
   });
 
   /**

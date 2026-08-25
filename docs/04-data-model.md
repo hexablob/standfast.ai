@@ -1,10 +1,13 @@
 <!-- docs/04-data-model.md -->
 # Data model
 
-> **Status: settled for phase 0.** Tables, keys and constraints below are
-> implemented in `packages/db` and migration `0000_foundation`. Anything
-> concerning embeddings, extraction or reconciliation is named here only where
-> the phase 0 schema has to leave room for it, and is not implemented.
+> **Status: settled through migration `0012`.** Tables, keys and constraints
+> below are implemented in `packages/db`. `0000_foundation` laid them down and
+> `0002` to `0012` extended them: the extraction invariants, the queue, egress
+> disclosure, the retrieval indexes, reconciliation (`0009`), org-consistency by
+> composite foreign key across every org-scoped table (`0010`), and the
+> ratification vocabulary phase 4 will write (`0011`, `0012`). Where a column
+> exists that nothing writes yet, this document says so on the row.
 
 ## The rule this model exists to enforce
 
@@ -163,31 +166,37 @@ judgement a human ratifies along with the statement.
 
 #### Atom lifecycle
 
-`atom_status` has four values and `atom_event` has four, deliberately close but
+`atom_status` has five values and `atom_event` has five, deliberately close but
 not identical: the status is where an atom *is*, the event is what *happened*.
 
 | From | To | By what | Exists today |
 | --- | --- | --- | --- |
 | — | `provisional` | `POST /v1/projects/{projectId}/atoms`, MCP `propose` | yes |
-| `provisional` | `canonical` | ratification, human only | constraint yes, endpoint no |
+| `provisional` | `canonical` | ratification, human only | yes — `POST /v1/atoms/{atomId}/ratify` |
 | `provisional` | `rejected` | ratification, human only | no |
 | `canonical` | `superseded` | a successor atom is ratified; `superseded_by` points at it | no |
+| `canonical` | `retired` | withdrawal with no successor, human only | status yes, route no |
 
-Two of those four have no route that writes them. `superseded_by` is a column
+Three of those five have no route that writes them. `superseded_by` is a column
 with no endpoint, `rejected` is a status nothing sets, and
 `docs/12-evaluation.md` needs the rejection path or ratification throughput
-counts only half the work a reviewer does. `docs/15-ratification.md` designs
-the surface that writes all three, and records the one transition this table
-cannot express: nothing retires a canonical atom without a successor.
+counts only half the work a reviewer does. `retired` is the newest of the three
+and the reason it is a status rather than a `canonical → rejected` transition is
+that `rejected` has a job: it means a human said no to a proposal, which is the
+signal the extraction-precision corpus measures, and a withdrawal counted as a
+rejection would inflate that rate with non-failures. `docs/15-ratification.md`
+designs the surface — the CLI — that writes all three.
 
 What *is* enforced today is the part that matters most: nothing reaches
 `canonical` without a human, and the composite foreign key below is what makes
 that unrepresentable rather than merely forbidden.
 
 ### `atom_events`
-`id uuid pk`, `org_id`, `atom_id → atoms on delete cascade`,
-`event atom_event not null`, `actor_id → actors`, `at timestamptz not null
-default now()`. Append-only.
+`id uuid pk`, `org_id`, `(atom_id, org_id) → atoms (id, org_id) on delete
+cascade`, `event atom_event not null`, `(actor_id, org_id) → actors (id,
+org_id)`, `reason atom_reject_reason`, `reason_note text`, `at timestamptz not
+null default now()`. Append-only. Both reason columns are nullable, are
+constrained to `event = 'rejected'`, and nothing writes them yet.
 
 `docs/02-principles.md` (5) makes ratification throughput a first-class product
 metric. A metric nobody recorded cannot be computed retroactively, so the log
@@ -227,8 +236,55 @@ to remember to call.
 Enforced by allowlist, never denylist (principle 9), applied to the schema.
 
 No table in this model has a column that can hold source. Reconciliation
-findings (phase 3) will store `file_path`, `line_start`, `line_end`, `verdict`,
-`atom_id` — a verdict and a pointer, per the thesis.
+findings store `file_path`, `line_start`, `line_end`, `verdict`, `atom_id` — a
+verdict and a pointer, per the thesis — plus one optional short `rationale`.
+
+Two things about those columns are worth stating, because both were got wrong
+once. `rationale` is the recognised hole and is capped, single-line and never
+served back out. **`file_path` needed the same character rule and did not
+originally have it**: it is 1024 characters and, unlike the rationale, it *is*
+returned to callers, so without one a newline and forty lines of source fit in
+it and would have been stored and echoed. A path is a pointer only if the schema
+says a path is what it holds.
+
+### Tenancy consistency, and what row-level security does not do
+
+RLS compares a row's `org_id` against the session GUC. It does **not** check
+that the row's other foreign keys agree with that `org_id`. A row can therefore
+name this tenant in `org_id` and another tenant's project in `project_id`,
+satisfy every single-column foreign key, and pass every policy. The other tenant
+never sees it — RLS filters it out — but it exists, it lists under their id for
+whoever wrote it, and whether the insert succeeds is an existence oracle about
+their data.
+
+The fix is the same composite-key trick used for ratification: declare the pair
+unique on the parent, and reference the pair.
+
+**Every org-scoped table does this**, as of migration `0010`. There is no
+single-column foreign key anywhere between two org-scoped tables — the only
+single-column references left point at `orgs` itself, which is the root and has
+no org to disagree with. A test asserts exactly that against `pg_constraint`,
+so a table added later without its composite key fails rather than quietly
+reopening the hole.
+
+Three details of that migration are worth knowing before touching it:
+
+- **Delete semantics were preserved key for key.** The migration changes what is
+  *representable*, never what happens when a parent goes away.
+- **Two keys null a pointer rather than cascading** — `egress_events.section_id`
+  and `atom_suppressions.duplicate_of_atom_id`. Once the key is composite, a
+  plain `ON DELETE SET NULL` would try to null `org_id` too and turn a delete
+  into an error, so both use Postgres's `ON DELETE SET NULL (column)` form.
+  Drizzle cannot express the column list; the migration is authoritative there
+  and says so.
+- **Nullable pointers stay optional.** These keys are MATCH SIMPLE, so a NULL in
+  the referencing column skips the check entirely.
+
+What this does *not* do is make a row visible across the boundary, or fix
+anything reachable through the API — no route could produce an inconsistent row,
+because every route takes both ids from the authenticated context. It removes
+the class of row from the schema, which is the difference between a guarantee
+and a habit.
 
 `packages/db/src/schema/wire-allowlist.ts` names the exact column set of every
 table whose rows cross the wire. A test reads `information_schema.columns` and

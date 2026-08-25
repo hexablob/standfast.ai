@@ -27,6 +27,7 @@ pnpm eval check                  # corpus integrity, label validity, coverage
 pnpm eval skeleton <doc> <who>   # write a blank label set for one document
 pnpm eval score <run-file>       # compute the metrics of an adjudicated run
 pnpm eval extraction             # run the extractor over the corpus
+pnpm eval reconciliation         # phase 3; always skips, no corpus, no labels
 ```
 
 `check` is deterministic — no model, no database, no network — and runs on every

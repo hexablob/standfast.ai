@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  foreignKey,
   index,
   pgTable,
   text,
@@ -61,6 +62,11 @@ export const actors = pgTable(
     // *constraint* to reference, and drizzle emits indexes after the foreign
     // keys that would need them.
     unique("actors_id_kind_key").on(t.id, t.kind),
+    // The tenancy sibling of the key above. `(id, kind)` answers "is this actor
+    // a human"; `(id, org_id)` answers "is this actor ours". Both questions get
+    // asked of the same column by different constraints, so both pairs are
+    // declared. Migration 0010 has the full argument.
+    unique("actors_id_org_key").on(t.id, t.orgId),
     unique("actors_org_system_key_key").on(t.orgId, t.systemKey),
     index("actors_org_id_idx").on(t.orgId),
     orgIsolationPolicy("actors"),
@@ -74,9 +80,7 @@ export const apiKeys = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
-    actorId: uuid("actor_id")
-      .notNull()
-      .references(() => actors.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id").notNull(),
     // The key itself is never stored. `prefix` is the displayable head so a
     // user can tell two keys apart in a list; `hash` is what is compared.
     prefix: text("prefix").notNull(),
@@ -92,6 +96,13 @@ export const apiKeys = pgTable(
   (t) => [
     uniqueIndex("api_keys_org_prefix_key").on(t.orgId, t.prefix),
     index("api_keys_actor_id_idx").on(t.actorId),
+    // The actor this key authenticates must belong to the same org the key
+    // does. RLS checks `org_id` alone and would not have noticed.
+    foreignKey({
+      columns: [t.actorId, t.orgId],
+      foreignColumns: [actors.id, actors.orgId],
+      name: "api_keys_actor_in_org_fk",
+    }).onDelete("cascade"),
     orgIsolationPolicy("api_keys"),
   ],
 ).enableRLS();

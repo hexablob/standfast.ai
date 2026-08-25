@@ -218,6 +218,44 @@ describe("the section.extract handler", () => {
     expect(await atomsIn((job as SectionExtractJob).sectionId)).toHaveLength(2);
   });
 
+  it("re-extracts an edited section instead of skipping it", async () => {
+    const [job] = await push("docs/edited.md", DOC);
+    const handle = makeSectionExtractHandler({ ports: fakePorts() });
+    await handle(job as SectionExtractJob, NEVER_ABORTED);
+    expect(await atomsIn((job as SectionExtractJob).sectionId)).toHaveLength(2);
+
+    // One new bullet, same heading, same ordinal. Two prior failure modes,
+    // each fatal on its own: reconcile used to delete-and-reinsert an edited
+    // section, so the re-enqueued job named a fresh id and the atoms above
+    // were already gone; and with the id preserved, a claim that ignored the
+    // hash would read the succeeded row and skip the new text forever.
+    const edited = [
+      "# Conventions",
+      "",
+      "- Deploys happen on Fridays",
+      "- Tabs indent Makefiles",
+      "- Reviews gate every merge",
+      "",
+    ].join("\n");
+    const [rejob] = await push("docs/edited.md", edited);
+    expect((rejob as SectionExtractJob).sectionId).toBe(
+      (job as SectionExtractJob).sectionId,
+    );
+
+    const outcome = await handle(rejob as SectionExtractJob, NEVER_ABORTED);
+    expect(outcome.status).toBe("extracted");
+
+    const row = await extractionRow((rejob as SectionExtractJob).sectionId);
+    expect(row?.status).toBe("succeeded");
+    expect(row?.attempts).toBe(2);
+
+    // The two unchanged bullets are re-proposed and suppressed as duplicates
+    // of their own atoms; the third bullet is the growth.
+    expect(await atomsIn((rejob as SectionExtractJob).sectionId)).toHaveLength(
+      3,
+    );
+  });
+
   it("skips a section that was deleted between enqueue and run", async () => {
     const [job] = await push("docs/vanished.md", DOC);
     await admin.query(

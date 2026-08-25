@@ -97,7 +97,26 @@ export const WIRE_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
     "search_vector",
     "created_at",
   ],
-  atom_events: ["id", "org_id", "atom_id", "event", "actor_id", "at"],
+  // `reason` and `reason_note` are the rejection vocabulary phase 4 added. They
+  // are the labelled corpus `docs/12-evaluation.md` gets out of ordinary use:
+  // `duplicate` on an atom deduplication failed to suppress is a threshold miss
+  // with a timestamp on it. `reason_note` is the only free-text field a human
+  // writes anywhere in this system — capped at 280, and written once, because
+  // `atom_events` is append-only.
+  atom_events: [
+    "id",
+    "org_id",
+    "atom_id",
+    "event",
+    "actor_id",
+    // Filled by a trigger from `actors`, never by a caller. It is what makes
+    // "only a human decides" a constraint on this table rather than a predicate
+    // in a repository — see migration 0013.
+    "actor_kind",
+    "reason",
+    "reason_note",
+    "at",
+  ],
   section_extractions: [
     "id",
     "org_id",
@@ -140,6 +159,55 @@ export const WIRE_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
     "reason",
     "similarity",
     "duplicate_of_atom_id",
+    "created_at",
+  ],
+  // One submission of verdicts. `verdict_count` is the denominator of the kill
+  // metric and is computed server-side from the rows actually written — a
+  // client-supplied count would let a caller improve our own false-positive
+  // rate by inflating it.
+  reconciliation_runs: [
+    "id",
+    "org_id",
+    "project_id",
+    "actor_id",
+    "trigger",
+    "verdict_count",
+    "created_at",
+  ],
+  // A verdict and a pointer.
+  //
+  // **Read this list before adding to it.** The third founding invariant is
+  // that source code never leaves the customer's machine, and this is the one
+  // path where an agent that has just *read* source is asked to say something
+  // about it. `file_path`, `line_start` and `line_end` point into a tree this
+  // server has never seen and never will. There is deliberately no column for a
+  // snippet, a diff, an excerpt, a hash of content, or anything else derived
+  // from the bytes of a file — their absence is the control.
+  //
+  // `rationale` is the exception and the known hole: the only free-text field
+  // anywhere on the reconciliation path. It is capped at 280 characters and
+  // rejected by the API if it carries a control character, so what fits is one
+  // sentence and not a function. It is never returned to another agent, never
+  // indexed, never embedded, and served by no MCP tool — appearing in this list
+  // is the record that a reviewer saw the column, not permission to serialise
+  // it. `docs/13-threat-model.md` still has "is a length cap sufficient, or does
+  // free text have no place here at all" open against phase 3; removing this
+  // column is one line here, one Zod field and one column.
+  reconciliation_findings: [
+    "id",
+    "org_id",
+    "project_id",
+    "run_id",
+    "atom_id",
+    "verdict",
+    "file_path",
+    "line_start",
+    "line_end",
+    "rationale",
+    "status",
+    "resolved_by",
+    "resolved_by_kind",
+    "resolved_at",
     "created_at",
   ],
 } as const;

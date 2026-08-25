@@ -428,14 +428,16 @@ migration, with no consumer in phase 0. The schema comment says why: *a metric
 nobody recorded cannot be computed retroactively*. This is the section that
 cashes that.
 
-The table, as implemented in `0000_foundation`:
+The table, as implemented in `0000_foundation` and extended by `0011` and `0012`:
 
 | Column | Notes |
 | --- | --- |
 | `id`, `org_id` | `org_id` carries the RLS policy like every other table |
-| `atom_id` | FK to `atoms (id)`, `on delete cascade` |
-| `event` | enum: `proposed`, `ratified`, `rejected`, `superseded` |
-| `actor_id` | FK to `actors (id)`; `actors.kind` is `human` or `agent` |
+| `atom_id` | FK to `atoms (id, org_id)` on `(atom_id, org_id)`, `on delete cascade` |
+| `event` | enum: `proposed`, `ratified`, `rejected`, `superseded`, `retired` |
+| `actor_id` | FK to `actors (id, org_id)` on `(actor_id, org_id)`; `actors.kind` is `human` or `agent` |
+| `reason` | enum, nullable, only on `event = 'rejected'`; nothing writes it yet |
+| `reason_note` | text, nullable, ≤ 280 characters, same constraint; nothing writes it yet |
 | `at` | `timestamptz not null default now()` |
 
 Every quantity above is a query over that table alone:

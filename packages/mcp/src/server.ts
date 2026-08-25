@@ -6,6 +6,7 @@ import {
   DESCRIPTIONS,
   PROPOSE_INPUT,
   READ_INPUT,
+  RECONCILE_INPUT,
   SEARCH_INPUT,
   STATUS_INPUT,
   TITLES,
@@ -219,6 +220,69 @@ export function createServer(options: ServerOptions): McpServer {
           }),
         );
         return asToolResult(found);
+      } catch (error) {
+        return asToolError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+  );
+
+  server.registerTool(
+    "reconcile",
+    {
+      title: TITLES.reconcile,
+      description: DESCRIPTIONS.reconcile,
+      inputSchema: RECONCILE_INPUT,
+      // Not read-only: it writes rows. Not destructive: it changes no atom,
+      // touches no code, and opens nothing. Not idempotent: two submissions are
+      // two runs, deliberately, because a merged duplicate would quietly move
+      // the denominator of this product's own kill metric.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      try {
+        const ack = unwrap(
+          await client.POST("/v1/projects/{projectId}/reconciliations", {
+            params: { path: { projectId: input.projectId } },
+            body: {
+              trigger: input.trigger,
+              // Absent rather than present-and-undefined. The generated client
+              // types are exact, and an explicit `undefined` would serialise to
+              // a `null` the `.strict()` schema on the other end refuses.
+              items: input.items.map((item) => ({
+                atomId: item.atomId,
+                verdict: item.verdict,
+                filePath: item.filePath,
+                ...(item.lineStart !== undefined
+                  ? { lineStart: item.lineStart }
+                  : {}),
+                ...(item.lineEnd !== undefined
+                  ? { lineEnd: item.lineEnd }
+                  : {}),
+                ...(item.rationale !== undefined
+                  ? { rationale: item.rationale }
+                  : {}),
+              })),
+            },
+          }),
+        );
+        // Deliberately not an envelope: an acknowledgement is not a list, so
+        // there is nothing to cap and nothing to mark truncated.
+        //
+        // Said back for the same reason `propose` says its note. An agent that
+        // reports "fixed" or retries because nothing visibly happened is the
+        // failure mode here, and `docs/02-principles.md` (6) is that this
+        // system recommends and never acts.
+        return asToolResult({
+          ...ack,
+          note: "Recorded. Nothing was fixed, no code changed and no atom moved. Only a human resolves a finding.",
+        });
       } catch (error) {
         return asToolError(
           error instanceof Error ? error.message : String(error),

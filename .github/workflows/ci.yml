@@ -174,3 +174,37 @@ jobs:
       # test that attempts to cross the boundary and watches it fail.
       - name: Integration and RLS regression tests
         run: pnpm exec vitest run
+
+  e2e:
+    name: scripted end-to-end
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        env:
+          POSTGRES_PASSWORD: standfast
+          POSTGRES_DB: standfast_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:standfast@localhost:5432/standfast_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # Phase 4 exit criterion 1 (docs/14-roadmap.md): the same script a human
+      # runs locally, unchanged. It installs, builds, migrates, bootstraps an
+      # org, runs the real API and worker on deterministic fakes, pushes a
+      # document, ratifies the extracted atom, and asserts the SessionStart
+      # hook's context pack carries it.
+      - name: End-to-end
+        run: bash scripts/e2e.sh

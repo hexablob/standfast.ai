@@ -8,12 +8,13 @@ import {
   ensureExtractorActor,
   requireExtractorActor,
 } from "../repositories/actors.js";
-import { createAtom, getAtom } from "../repositories/atoms.js";
+import { createAtom, getAtom, ratifyAtom } from "../repositories/atoms.js";
 import {
   listSections,
   putDocument,
   type SectionChange,
 } from "../repositories/documents.js";
+import { claimExtraction } from "../repositories/extractions.js";
 import {
   adminClient,
   adminUrl,
@@ -127,6 +128,7 @@ async function push(
   documentId: string;
   sections: SectionChange;
   enqueued: string[];
+  staleCitations: string[];
 }> {
   return withActor(data.orgA, data.humanA, async (db) => {
     const result = await putDocument(
@@ -140,6 +142,7 @@ async function push(
       documentId: result.document.id,
       sections: result.sections,
       enqueued: result.enqueued,
+      staleCitations: result.staleCitations,
     };
   });
 }
@@ -208,8 +211,10 @@ describe("a byte-identical push is not a rewrite", () => {
     // nothing here is new, so phase 1c will have nothing to enqueue.
     expect(again.documentId).toBe(first.documentId);
     expect(again.sections.inserted).toEqual([]);
+    expect(again.sections.updated).toEqual([]);
     expect(again.sections.deleted).toEqual([]);
     expect(again.sections.matched).toHaveLength(2);
+    expect(again.staleCitations).toEqual([]);
 
     const survived = await withActor(data.orgA, data.humanA, (db) =>
       getAtom(db, atomId),
@@ -247,6 +252,136 @@ describe("a byte-identical push is not a rewrite", () => {
     expect(again.sections.matched).toEqual([before[0]?.id]);
     expect(again.sections.deleted).toEqual([before[1]?.id]);
     expect(again.sections.inserted).toEqual([]);
+  });
+});
+
+describe("an edited section keeps its identity", () => {
+  it("keeps the row and its atoms when only the text changed", async () => {
+    const first = await push("docs/edit.md", TWO_SECTIONS);
+    const beta = (await sectionsOf(first.documentId))[1];
+    const atomId = await atomOn(
+      first.documentId,
+      beta?.id ?? "",
+      "Never revert main.",
+    );
+
+    const again = await push(
+      "docs/edit.md",
+      "# Alpha\nShip on Fridays.\n\n# Beta\nNever revert main. Ever.\n\n",
+    );
+
+    // Pass 2: same ordinal, same heading path, new hash. The row survives,
+    // it is re-enqueued for extraction, and its atom is untouched.
+    expect(again.sections.updated).toEqual([beta?.id]);
+    expect(again.sections.inserted).toEqual([]);
+    expect(again.sections.deleted).toEqual([]);
+    expect(again.enqueued).toEqual([beta?.id]);
+    expect(again.staleCitations).toEqual([]);
+
+    const survived = await withActor(data.orgA, data.humanA, (db) =>
+      getAtom(db, atomId),
+    );
+    expect(survived?.id).toBe(atomId);
+  });
+
+  it("carries a ratified atom across a whitespace fix", async () => {
+    const first = await push("docs/ratified.md", TWO_SECTIONS);
+    const alpha = (await sectionsOf(first.documentId))[0];
+    const atomId = await atomOn(first.documentId, alpha?.id ?? "", QUOTE);
+    await withActor(data.orgA, data.humanA, (db) =>
+      ratifyAtom(db, data.orgA, data.humanA, atomId),
+    );
+
+    // The regression this mechanism exists for: before pass 2, a trailing
+    // space deleted the section row and the cascade took the ratification
+    // with it.
+    const again = await push(
+      "docs/ratified.md",
+      "# Alpha\nShip on Fridays. \n\n# Beta\nNever revert main.\n\n",
+    );
+    expect(again.sections.updated).toEqual([alpha?.id]);
+    expect(again.staleCitations).toEqual([]);
+
+    const survived = await withActor(data.orgA, data.humanA, (db) =>
+      getAtom(db, atomId),
+    );
+    expect(survived?.status).toBe("canonical");
+  });
+
+  it("moves the span with the quote", async () => {
+    const first = await push(
+      "docs/moved-quote.md",
+      "# Rule\nShip on Fridays.\n\n",
+    );
+    const section = (await sectionsOf(first.documentId))[0];
+    const atomId = await atomOn(first.documentId, section?.id ?? "", QUOTE);
+
+    const again = await push(
+      "docs/moved-quote.md",
+      "# Rule\nAlways and forever: Ship on Fridays.\n\n",
+    );
+    expect(again.sections.updated).toEqual([section?.id]);
+    expect(again.staleCitations).toEqual([]);
+
+    // Re-anchored to the quote's first occurrence in the new body, in code
+    // points — ASCII here, so indexOf agrees with the stored form.
+    const body = (await sectionsOf(first.documentId))[0]?.body ?? "";
+    const start = body.indexOf(QUOTE);
+    expect(start).toBeGreaterThan(7);
+    const row = await withActor(data.orgA, data.humanA, (db) =>
+      db.execute<{ span: string }>(
+        sql`select source_span as span from atoms where id = ${atomId}::uuid`,
+      ),
+    );
+    expect(row.rows[0]?.span).toBe(`[${start},${start + QUOTE.length})`);
+  });
+
+  it("reports a vanished quote and touches nothing", async () => {
+    const first = await push(
+      "docs/vanished-quote.md",
+      "# Rule\nShip on Fridays.\n\n",
+    );
+    const section = (await sectionsOf(first.documentId))[0];
+    const atomId = await atomOn(first.documentId, section?.id ?? "", QUOTE);
+
+    const again = await push(
+      "docs/vanished-quote.md",
+      "# Rule\nShip on Mondays.\n\n",
+    );
+
+    // Recorded, never acted on. The id is reported and the atom is exactly
+    // as it was — status, quote and span included: no status means "the
+    // prose changed underneath it", and none is invented here.
+    expect(again.sections.updated).toEqual([section?.id]);
+    expect(again.staleCitations).toEqual([atomId]);
+
+    const atom = await withActor(data.orgA, data.humanA, (db) =>
+      getAtom(db, atomId),
+    );
+    expect(atom?.status).toBe("provisional");
+    expect(atom?.sourceQuote).toBe(QUOTE);
+  });
+
+  it("still deletes a section that was edited and moved", async () => {
+    const first = await push("docs/edited-moved.md", TWO_SECTIONS);
+    const betaId = (await sectionsOf(first.documentId))[1]?.id ?? "";
+    const atomId = await atomOn(first.documentId, betaId, "Never revert main.");
+
+    // Beta's text and its (ordinal, heading_path) key both changed, so
+    // neither pass can claim it. Pinned on purpose: the strict rule prefers
+    // losing an identity to marrying the wrong rows.
+    const again = await push(
+      "docs/edited-moved.md",
+      "# Beta\nAlways revert main.\n\n# Alpha\nShip on Fridays.\n\n",
+    );
+    expect(again.sections.deleted).toEqual([betaId]);
+    expect(again.sections.updated).toEqual([]);
+    expect(again.sections.inserted).toHaveLength(1);
+
+    const gone = await withActor(data.orgA, data.humanA, (db) =>
+      getAtom(db, atomId),
+    );
+    expect(gone).toBeUndefined();
   });
 });
 
@@ -400,6 +535,40 @@ describe("extraction bookkeeping records what cannot be recomputed", () => {
     // section: a better extractor gets to look again.
     const second = await claim(section?.id ?? "", "ev2-bbbb");
     expect(second).not.toBe("");
+  });
+
+  it("reclaims a succeeded run when the section hash has moved", async () => {
+    const doc = await push("docs/rehash.md", "# Rule\nShip on Fridays.\n\n");
+    const section = (await sectionsOf(doc.documentId))[0];
+    await claim(
+      section?.id ?? "",
+      "ev1-rehash",
+      `, status, finished_at, attempts`,
+      `, 'succeeded', now(), 1`,
+    );
+
+    const at = (sectionHash: string) =>
+      withActor(data.orgA, data.humanA, (db) =>
+        claimExtraction(db, {
+          orgId: data.orgA,
+          projectId: data.projectA,
+          sectionId: section?.id ?? "",
+          sectionHash,
+          extractorVersion: "ev1-rehash",
+          leaseSeconds: 60,
+        }),
+      );
+
+    // Same hash: finished work is finished, a redelivered job stays free.
+    expect(await at("hash")).toEqual({ kind: "already-succeeded" });
+
+    // The section was edited in place — same row, new hash. Without the hash
+    // comparison this would be "already-succeeded" and the re-enqueued
+    // extraction would be skipped forever: silent staleness instead of work.
+    expect(await at("hash-moved")).toMatchObject({
+      kind: "claimed",
+      attempts: 2,
+    });
   });
 
   it("refuses a lease on a run that has already finished", async () => {
@@ -568,7 +737,11 @@ describe("the write path decides what extraction sees", () => {
     const sent = recorded.calls.slice(before);
     expect(sent).toHaveLength(1);
     expect(edited.enqueued).toHaveLength(1);
-    expect(sent[0]?.sectionId).toBe(edited.sections.inserted[0]);
+    // The edited section kept its row: the job names the *updated* id, and
+    // nothing was inserted or destroyed on the way.
+    expect(sent[0]?.sectionId).toBe(edited.sections.updated[0]);
+    expect(edited.sections.inserted).toEqual([]);
+    expect(edited.sections.deleted).toEqual([]);
   });
 
   it("attributes the job to the extractor, never to the pusher", async () => {

@@ -200,6 +200,56 @@
           "updatedAt"
         ]
       },
+      "PagedDocumentManifestEntry": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocumentManifestEntry"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rows matching the query, not rows returned."
+          },
+          "returned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether rows exist beyond this page."
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "returned",
+          "truncated"
+        ]
+      },
+      "DocumentManifestEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "contentHash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "contentHash"
+        ]
+      },
       "PutDocument": {
         "type": "object",
         "properties": {
@@ -358,11 +408,15 @@
               "provisional",
               "canonical",
               "rejected",
-              "superseded"
+              "superseded",
+              "retired"
             ]
           },
           "sourceQuote": {
             "type": "string"
+          },
+          "sourceSpan": {
+            "$ref": "#/components/schemas/Span"
           },
           "ratifiedBy": {
             "type": "string",
@@ -373,6 +427,24 @@
             "type": "string",
             "nullable": true,
             "format": "date-time"
+          },
+          "supersededBy": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "ratifiedByKind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "human",
+              "agent",
+              null
+            ]
+          },
+          "ratifiedByName": {
+            "type": "string",
+            "nullable": true
           },
           "createdAt": {
             "type": "string",
@@ -389,9 +461,28 @@
           "kind",
           "status",
           "sourceQuote",
+          "sourceSpan",
           "ratifiedBy",
           "ratifiedAt",
+          "supersededBy",
           "createdAt"
+        ]
+      },
+      "Span": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "start",
+          "end"
         ]
       },
       "CreateAtom": {
@@ -423,21 +514,7 @@
             "minLength": 1
           },
           "sourceSpan": {
-            "type": "object",
-            "properties": {
-              "start": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "end": {
-                "type": "integer",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "start",
-              "end"
-            ]
+            "$ref": "#/components/schemas/Span"
           }
         },
         "required": [
@@ -594,6 +671,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "retired": {
+            "type": "integer",
+            "minimum": 0
+          },
           "canonical": {
             "type": "integer",
             "minimum": 0
@@ -609,14 +690,25 @@
           "awaitingRatification": {
             "type": "integer",
             "minimum": 0
+          },
+          "openFindings": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "canonicalUnchecked": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "required": [
           "provisional",
+          "retired",
           "canonical",
           "rejected",
           "superseded",
-          "awaitingRatification"
+          "awaitingRatification",
+          "openFindings",
+          "canonicalUnchecked"
         ]
       },
       "ContextResponse": {
@@ -845,6 +937,435 @@
         "required": [
           "query"
         ]
+      },
+      "RejectAtom": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "not_true",
+              "duplicate",
+              "not_a_decision",
+              "wrong_severity",
+              "document_is_wrong"
+            ]
+          },
+          "reasonNote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 280
+          }
+        },
+        "additionalProperties": false
+      },
+      "PagedQueueItem": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rows matching the query, not rows returned."
+          },
+          "returned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether rows exist beyond this page."
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "returned",
+          "truncated"
+        ]
+      },
+      "QueueItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "decision",
+              "convention",
+              "constraint"
+            ]
+          },
+          "statement": {
+            "type": "string"
+          },
+          "sourceQuote": {
+            "type": "string"
+          },
+          "sourceSpan": {
+            "$ref": "#/components/schemas/Span"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisional",
+              "canonical",
+              "rejected",
+              "superseded",
+              "retired"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proposedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proposedById": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "proposedByKind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "human",
+              "agent",
+              null
+            ]
+          },
+          "proposedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "documentPath": {
+            "type": "string"
+          },
+          "sectionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sectionOrdinal": {
+            "type": "integer"
+          },
+          "sectionHeadingPath": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sectionBody": {
+            "type": "string",
+            "description": "The whole section. Never truncated."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "statement",
+          "sourceQuote",
+          "sourceSpan",
+          "status",
+          "createdAt",
+          "proposedAt",
+          "proposedById",
+          "proposedByKind",
+          "proposedByName",
+          "documentId",
+          "documentPath",
+          "sectionId",
+          "sectionOrdinal",
+          "sectionHeadingPath",
+          "sectionBody"
+        ]
+      },
+      "Ratification": {
+        "type": "object",
+        "properties": {
+          "backlog": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Provisional atoms in the project. Never a filtered count."
+          },
+          "oldestProposedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "queueAgeSeconds": {
+            "type": "number",
+            "nullable": true
+          },
+          "decided": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Atoms ratified, rejected or retired in the window."
+          },
+          "medianSecondsToDecision": {
+            "type": "number",
+            "nullable": true,
+            "description": "Null when nothing was decided. Zero would be a lie."
+          },
+          "backlogOlderThan": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "backlogShareOlderThan": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Null on an empty backlog: 0/0 is not 0."
+          },
+          "backlogAgesSeconds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Every provisional atom's age, ascending, so a caller can answer for any threshold without this route committing to one."
+          }
+        },
+        "required": [
+          "backlog",
+          "oldestProposedAt",
+          "queueAgeSeconds",
+          "decided",
+          "medianSecondsToDecision",
+          "backlogOlderThan",
+          "backlogShareOlderThan",
+          "backlogAgesSeconds"
+        ]
+      },
+      "ReconcileAck": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recorded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "runId",
+          "recorded",
+          "open"
+        ]
+      },
+      "ReconcileRequest": {
+        "type": "object",
+        "properties": {
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "post_edit",
+              "session_end",
+              "explicit",
+              "agent",
+              "atom_ratified",
+              "stale"
+            ],
+            "default": "agent"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconcileItem"
+            },
+            "minItems": 1,
+            "maxItems": 64
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "ReconcileItem": {
+        "type": "object",
+        "properties": {
+          "atomId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "honored",
+              "violated",
+              "not_applicable",
+              "unverifiable"
+            ]
+          },
+          "filePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "lineStart": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "lineEnd": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 280
+          }
+        },
+        "required": [
+          "atomId",
+          "verdict",
+          "filePath"
+        ],
+        "additionalProperties": false
+      },
+      "PagedFinding": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rows matching the query, not rows returned."
+          },
+          "returned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether rows exist beyond this page."
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "returned",
+          "truncated"
+        ]
+      },
+      "Finding": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "atomId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "honored",
+              "violated",
+              "not_applicable",
+              "unverifiable"
+            ]
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "lineStart": {
+            "type": "integer",
+            "nullable": true
+          },
+          "lineEnd": {
+            "type": "integer",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "open",
+              "accepted",
+              "dismissed"
+            ]
+          },
+          "resolvedBy": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "runId",
+          "atomId",
+          "verdict",
+          "filePath",
+          "lineStart",
+          "lineEnd",
+          "status",
+          "resolvedBy",
+          "resolvedAt",
+          "createdAt"
+        ]
+      },
+      "ResolveFinding": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "dismissed"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {}
@@ -1259,6 +1780,86 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/documents/manifest": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "The sync manifest: `(id, path, contentHash)` per document, ordered by path. Bodies are never selected.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "projectId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "description": "Rows per page, at most 200."
+            },
+            "required": false,
+            "description": "Rows per page, at most 200.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "nullable": true,
+              "minimum": 0,
+              "default": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedDocumentManifestEntry"
                 }
               }
             }
@@ -1738,7 +2339,7 @@
             "apiKey": []
           }
         ],
-        "description": "Promotes a provisional atom to canonical. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message.",
+        "description": "Promotes a provisional atom to canonical, optionally superseding the atom it replaces. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message.",
         "parameters": [
           {
             "schema": {
@@ -1748,6 +2349,15 @@
             "required": true,
             "name": "atomId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": false,
+            "name": "supersedes",
+            "in": "query"
           }
         ],
         "responses": {
@@ -2115,6 +2725,589 @@
           },
           "404": {
             "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/atoms/{atomId}/reject": {
+      "post": {
+        "tags": [
+          "atoms"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "Rejects a provisional atom. Terminal. The optional reason is a closed vocabulary, and it is what turns a reviewer's ordinary work into the labelled corpus extraction precision is measured against.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "atomId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectAtom"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Atom"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The calling actor is an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The atom is not provisional",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/atoms/{atomId}/retire": {
+      "post": {
+        "tags": [
+          "atoms"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "Withdraws a canonical atom that has no successor. Terminal, and deliberately not a rejection: `rejected` means a human said no to a proposal, and a retired atom was right until the world moved on.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "atomId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Atom"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The calling actor is an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The atom is not canonical",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/queue": {
+      "get": {
+        "tags": [
+          "atoms"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "The provisional queue, oldest first, with the section each atom was projected from. The section body is returned whole: provenance is what the decision rests on, and a reviewer who has to fetch it separately is a reviewer who stops checking it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "projectId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "description": "Rows per page, at most 200."
+            },
+            "required": false,
+            "description": "Rows per page, at most 200.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "nullable": true,
+              "minimum": 0,
+              "default": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "decision",
+                "convention",
+                "constraint"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": false,
+            "name": "documentId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedQueueItem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/ratification": {
+      "get": {
+        "tags": [
+          "atoms"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "Ratification throughput: the median time from proposal to decision, and how much of the backlog is older than an age you name. The age is required because no bar has been chosen for this metric, and a default here would be one invented by accident.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "projectId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "required": true,
+            "name": "olderThanSeconds",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Throughput and backlog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ratification"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/reconciliations": {
+      "post": {
+        "tags": [
+          "reconciliation"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "Records one run of verdicts on whether code still honors the atoms that govern it. No field accepts source code. Verdicts are recorded and never acted on: nothing here edits code, opens a pull request, or changes an atom.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "projectId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileAck"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Violates a constraint on the record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/findings": {
+      "get": {
+        "tags": [
+          "reconciliation"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "The human queue. Filter by status; open findings are the violations waiting on an answer. The rationale is never served — it is written for the human reviewing the queue, not for the next agent to read.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "projectId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "description": "Rows per page, at most 200."
+            },
+            "required": false,
+            "description": "Rows per page, at most 200.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "nullable": true,
+              "minimum": 0,
+              "default": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "open",
+                "accepted",
+                "dismissed"
+              ]
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Findings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedFinding"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/findings/{findingId}/resolve": {
+      "post": {
+        "tags": [
+          "reconciliation"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "description": "A human answers one open finding. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message. Nothing is deleted — a dismissed finding is the numerator of this product's own kill metric.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "findingId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveFinding"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Finding"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The calling actor is an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or belongs to another org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The finding is not open",
             "content": {
               "application/json": {
                 "schema": {

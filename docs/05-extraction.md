@@ -1,21 +1,25 @@
 <!-- docs/05-extraction.md -->
 # Extraction
 
-> **Status: built, except for the model.** Phase 1a shipped the schema half —
+> **Status: built, and unmeasured.** Phase 1a shipped the schema half —
 > the embedding column, the extraction-state table, the suppression table, the
 > composite key from an atom to its section, and the verbatim-quote trigger. 1b
 > shipped the evaluation harness. 1c shipped the queue, the worker and the
 > pipeline described below: transactional enqueue, the claim protocol, verbatim
 > verification, embedding, the dedup bands and the write.
 >
-> What does not exist is a model. The extractor, the embedder and the dedup
-> judge are **ports**, satisfied by deterministic fakes, which is what lets the
-> whole pipeline run in CI with no network and no secrets. **Nothing in this
-> repository calls a model.** Phase 1d binds real adapters behind those three
-> interfaces, and lands the outbound allowlist that governs them.
+> 1d bound real adapters behind the three ports: `AnthropicExtractor` and
+> `AnthropicJudge`, `VoyageEmbedder`, and `BgeEmbedder` for a deployment that
+> runs its own model, all in `packages/worker/src/adapters/`. The deterministic
+> fakes remain beside them, which is what still lets the whole pipeline run in
+> CI with no network and no secrets, and `resolvePorts` in
+> `packages/worker/src/main.ts` refuses at start-up rather than mixing the two.
 >
-> Read *What phase 1c settled*, below, before assuming anything here is still
-> open. The prompt, the window size and the thresholds genuinely are.
+> **What is still not claimed is the exit criterion.** Extraction precision has
+> never been measured, because the labelled corpus it needs does not exist and
+> no model may write those labels (`docs/12-evaluation.md`). The prompt, the
+> window size and the thresholds are all still defaults. Read *What phase 1c
+> settled*, below, before assuming anything else here is open.
 
 ## What this document owes
 

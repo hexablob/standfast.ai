@@ -64,6 +64,41 @@
       "when": 1787145600000,
       "tag": "0008_query_egress_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787232000000,
+      "tag": "0009_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787318400000,
+      "tag": "0010_tenancy_consistency",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787404800000,
+      "tag": "0011_reject_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787404900000,
+      "tag": "0012_retired_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787405000000,
+      "tag": "0013_decision_is_human",
+      "breakpoints": true
     }
   ]
 }

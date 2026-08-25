@@ -1,13 +1,14 @@
 <!-- docs/13-threat-model.md -->
 # Threat model
 
-> **Status: designed, not implemented.** The tenancy, authentication and wire
-> mitigations below exist in phase 0 and are asserted by tests that run in CI
-> today; each one names the file that enforces it. Everything defending the
-> instruction channel — the first and most important threat here — is design
-> only. `docs/14-roadmap.md` requires this document settled before phase 2
-> ships, because phase 2 is the first time an atom enters a session that did
-> not ask for it.
+> **Status: partly implemented.** The tenancy, authentication and wire
+> mitigations below exist and are asserted by tests that run in CI today; each
+> one names the file that enforces it. Phases 2 and 3 then shipped under this
+> document: the egress allowlist of rule 1 is `packages/core/src/egress.ts`,
+> whose `admitEgress` every adapter calls in its constructor, and the disclosure
+> record is `egress_events` (migration `0006`). What is still design only is
+> what defends the instruction channel at the point of ratification — the queue,
+> the reject route and the flagging heuristic — and that is phase 4.
 
 ## What this document is for
 
@@ -35,7 +36,7 @@ Severity is not a feeling. It is which invariant is threatened.
 | A cross-tenant read or write not refused by row-level security | Highest, regardless of what the application layer would have done |
 | An atom whose provenance does not resolve to its cited section | High. Invariant 1 is what makes an atom auditable |
 | A pin that has silently become mutable | High. `docs/02-principles.md` (12) |
-| An agent-authored directive reaching a session unflagged | High from phase 2. Before phase 2 there is no such path |
+| An agent-authored directive reaching a session unflagged | High. The path is live today: phase 2 injects unprompted and phase 4 has not built the flagging |
 
 Report through GitHub's private vulnerability reporting, per `SECURITY.md`.
 
@@ -127,6 +128,11 @@ rewrites a security convention into its opposite.
   asserted in `packages/db/src/testing/rls.integration.test.ts`.
 - **`canonical` without a ratifier is unrepresentable.**
   `atoms_canonical_requires_ratification`, also tested.
+- **The ledger refuses an agent decision too.** Migration `0013` carries
+  `actor_kind` onto `atom_events`, keys it into `actors (id, kind)`, and adds
+  `atom_events_decision_is_human`: every event but `proposed` must be a
+  human's. An agent can record that it proposed something and nothing else, so
+  the history a reviewer reads cannot be forged into agreement.
 - **`status` is not a parameter.** `CreateAtomSchema` has no `status` field and
   `createAtom` in `packages/db/src/repositories/atoms.ts` does not accept one.
   The column takes its default. The database would refuse anyway; this is about
@@ -145,26 +151,30 @@ rewrites a security convention into its opposite.
   would otherwise report success it did not achieve, and stop surfacing the
   pending decision to the human — which is the same outcome by accident.
 
+- **Provenance is verified in the database.** Migration `0002` adds
+  `standfast_verify_atom_quote()` and fires it from
+  `atoms_verify_quote_insert` and `atoms_verify_quote_update`, so a row whose
+  `source_quote` is not exactly what the cited section holds at `source_span`
+  is rejected rather than stored. An agent calling `propose` cannot attach a
+  quote to a section it does not come from, and the check does not depend on
+  the caller having gone through `createAtom`.
+  `packages/core/src/quote.ts` is the same comparison in TypeScript — same
+  code points, no normalisation — so the pipeline drops a bad quote before the
+  trigger has to. The "provenance spoofing" that `SECURITY.md` puts in scope
+  is closed for the quote itself.
+- **`section_id` and `document_id` are tied together.**
+  `atoms_document_section_fk` carries `(document_id, section_id)` into
+  `document_sections (document_id, id)` with `on delete cascade`, written in
+  migration `0002`, so an atom cannot cite section *S* while naming a document
+  *S* does not belong to. Migration `0010` then carried `org_id` into the same
+  keys — `atoms_document_in_org_fk`, `atoms_project_in_org_fk`,
+  `atoms_ratified_by_in_org_fk` and `atoms_superseded_by_in_org_fk` — so the
+  two fields a reviewer reads as provenance are made to agree by the schema
+  rather than by convention.
+
 ### Still open
 
-**Provenance is asserted, not verified.** The database checks that
-`source_quote` is non-blank. Nothing today checks that it actually appears in
-the cited section at `source_span`. `createAtom` does not read the section
-body. So an agent calling `propose` can attach any quote it likes to any
-section. This is precisely the "provenance spoofing" that `SECURITY.md` puts
-in scope, and it is unenforced until phase 1, whose first exit criterion is a
-whole-database query returning zero atoms whose quote does not verify. Until
-that lands, provenance shown to a reviewer is the proposer's claim about
-provenance.
-
-**Nothing ties `section_id` to `document_id`.** They are independent foreign
-keys. Within one org an atom can cite section *S* while naming document *D*
-that *S* does not belong to. Row-level security keeps both inside the tenant,
-so this is an integrity problem rather than a disclosure one — but a reviewer
-reading provenance is reading two fields that the schema never made agree. A
-composite key would fix it; it has not been written.
-
-**The statement is not the quote.** Even after phase 1's verification, only
+**The statement is not the quote.** Even with those triggers in place, only
 the quote is checked against the section. The `statement` — the sentence that
 is actually injected into sessions — is model output, and a verified innocuous
 quote can sit under an injected statement. Whether extraction should require
@@ -235,7 +245,7 @@ a claim rather than a control.
 | Mechanism | Defends against | Does **not** defend against |
 | --- | --- | --- |
 | `org_id` on every row; one isolation policy per table, `TO standfast_app`, with both `USING` and `WITH CHECK` | A query that forgets its own `where org_id`, and a write that parks a row in another tenant's space | A caller that authenticates as the other org |
-| `FORCE ROW LEVEL SECURITY` on all eight tables | The table owner reading straight through its own policies — including a test suite that connects as the owner and passes while protecting nothing | A superuser or any role holding `BYPASSRLS`, for which `FORCE` is irrelevant |
+| `FORCE ROW LEVEL SECURITY` on all thirteen tables | The table owner reading straight through its own policies — including a test suite that connects as the owner and passes while protecting nothing | A superuser or any role holding `BYPASSRLS`, for which `FORCE` is irrelevant |
 | `nullif(current_setting('standfast.org_id', true), '')::uuid` | A forgotten `set_config` returning **every** row instead of none, on a pooled connection where the GUC survives as `''` rather than disappearing | A `set_config` carrying the wrong org id |
 | `withActor` as the only route to a connection; `getPool` absent from `index.ts`; the package `exports` map publishes only `.` | Reaching the database by forgetting a wrapper | Code inside `packages/db` itself |
 | `assertTenantIsolationApplies()` before the port binds | `DATABASE_URL=postgres://postgres@…` — the first connection string anyone reaches for locally, and the first one copied into a deployment | A role granted `BYPASSRLS` after start-up |
@@ -428,7 +438,7 @@ counter-example converts a founding invariant into marketing.
 
 **There is no representation of source code to leak.** No contents, no AST, no
 call graph, no file tree — excluded, not deferred (`docs/14-roadmap.md`). No
-column in any of the eight tables can hold one.
+column in any of the thirteen tables can hold one.
 
 **`packages/db/src/schema/wire-allowlist.ts` names the exact column set** of
 every table whose rows cross the wire, and
@@ -464,6 +474,29 @@ directory** — `resolve`, then `relative`, then reject on `..`, on a leading
 separator, and on the empty string. That is the mirror-image problem, a hostile
 server writing outside the directory the customer named, and it is tested.
 
+### The `PostToolUse` hook, which sends a path and nothing else
+
+Phase 3 adds a third hook, firing after every `Edit` and `Write`
+(`packages/mcp/src/hooks.ts`). The *reading* of local source it implies is on
+the customer's side of the line drawn under *Deliberately out of scope*: the
+agent already has the file open, and Standfast neither opens it nor learns what
+was read. What needs analysing is what the hook **sends**, and that is one
+field — the path of the edited file, as the `paths` argument to the same
+`context` call the `context` tool has always made. A path is not source. It is
+not nothing either, since directory structure is weak information about a
+codebase, but it is the information the pull path already sent over a channel
+that already existed, so the hook widens frequency rather than surface.
+
+The asymmetry is on the way back. An atom's `source_quote` is verified against
+the stored section by `packages/core/src/quote.ts`, and a quote that does not
+appear in the document it claims is dropped — provenance on the knowledge side
+is checked rather than trusted. A finding's `path:line` has no equivalent. It is
+asserted by the agent, and the server holds no file to check it against, which
+is invariant 3 working as designed rather than a gap to close. That makes the
+location **structurally unverifiable**, not merely unverified: no validation
+reaches it, and the only reader who can confirm a finding points at real code is
+the human with the repository open. A finding is a claim awaiting review.
+
 ### Still open
 
 - **Allowed text columns still hold text.** `documents.body`,
@@ -482,9 +515,10 @@ server writing outside the directory the customer named, and it is tested.
   whether free text has no place on that path at all. This document does not
   close that question. It records that the field is the hole, and that removing
   it entirely stays on the table.
-- **The findings table does not exist yet.** Its columns join the allowlist in
-  the same diff that creates them, which is a phase-3 exit criterion and not a
-  present-tense guarantee.
+- **The findings tables exist and their columns are in the allowlist.**
+  `reconciliation_runs` and `reconciliation_findings` (migration `0009`) are
+  named in `packages/db/src/schema/wire-allowlist.ts`, so this is a
+  present-tense guarantee rather than a phase-3 promise.
 
 ---
 
@@ -514,7 +548,8 @@ attack in the list, and it does not require touching Standfast's servers at all.
   attestations.
 - **`engine-strict=true`**, refusing to install on an unsupported Node rather
   than failing later and oddly.
-- **`pnpm install --frozen-lockfile`** in both CI jobs.
+- **`pnpm install --frozen-lockfile`** in all three CI jobs — `commits`,
+  `check` and `database`.
 - **`permissions: contents: read`** as the workflow default.
 
 ### The Supermemory plugin, since a reader will ask
@@ -617,8 +652,10 @@ on a wire.
 1. **Named endpoints only.** Every outbound destination is a configured
    allowlist entry with a pinned model version. A provider that is not on the
    list is not called, and the failure is a start-up refusal, not a fallback.
-   This is the outbound counterpart to `wire-allowlist.ts`, and it does not
-   exist yet.
+   This is the outbound counterpart to `wire-allowlist.ts`, and it is
+   `packages/core/src/egress.ts`: `parseEgressAllowlist` reads
+   `STANDFAST_EGRESS_ALLOWLIST`, `assertEgressAllowed` refuses at start-up, and
+   `admitEgress` is called by every adapter constructor.
 2. **The read path is stricter than the write path.** A model that sees stored
    prose in a batch job is one procurement decision. A model that sees live
    queries is another, and it needs its own consent. Reranking must be
@@ -686,11 +723,16 @@ Consolidated, so the list can be worked rather than re-derived.
 
 **Before phase 1 ships**
 
-- Verbatim quote verification, without which provenance is an assertion.
-- Whether `(document_id, section_id)` should be a composite key, so provenance
-  cannot name two things that disagree.
-- Whether extraction should constrain the statement to be entailed by the
-  quote, and how that would be checked.
+- ~~Verbatim quote verification, without which provenance is an assertion.~~
+  **Shipped in phase 1** as the `standfast_verify_atom_quote()` triggers of
+  migration `0002`, with `packages/core/src/quote.ts` as the same check ahead
+  of the database.
+- ~~Whether `(document_id, section_id)` should be a composite key, so
+  provenance cannot name two things that disagree.~~ **Answered yes**, in the
+  same migration; `0010` then carried `org_id` into that key and the others
+  beside it.
+- **Still open, and now overdue.** Whether extraction should constrain the
+  statement to be entailed by the quote, and how that would be checked.
 
 **Before phase 1d ships**
 
@@ -727,10 +769,12 @@ document
   third-party reranker is acceptable and under what consent
   (`docs/06-retrieval.md`, condition 2).
 
-**Before phase 3 ships**
+**Before phase 3 ships** — shipped without it, so this one is overdue
 
 - Whether a length cap is sufficient protection for the `reconcile` rationale
-  field, or whether free text has no place on that path.
+  field, or whether free text has no place on that path. The field is live in
+  `reconciliation_findings` and capped; whether the cap is the right control
+  is still undecided.
 
 **Before phase 4 ships**
 

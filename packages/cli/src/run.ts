@@ -3,7 +3,9 @@ import { createClient } from "@standfast/sdk";
 import type { Ctx } from "./commands.js";
 import * as commands from "./commands.js";
 import { DEFAULT_BASE_URL, loadConfig } from "./config.js";
+import { exportAll } from "./export.js";
 import { type Format, note, UsageError } from "./output.js";
+import { syncResolve, syncRun, syncStatus } from "./sync.js";
 
 /**
  * Argument parsing uses `node:util` `parseArgs`. It is a runtime builtin, so
@@ -12,21 +14,37 @@ import { type Format, note, UsageError } from "./output.js";
  * justification at this size.
  */
 
-const USAGE = `standfast — a shared knowledge layer for coding agents
+/** Exported so a test can hold it against OPTIONS — see cli.test.ts. */
+export const USAGE = `standfast — a shared knowledge layer for coding agents
 
   standfast login --key <sf_sk_…> [--url <base-url>]
   standfast logout
   standfast whoami
 
-  standfast project ls
+  standfast project ls [--limit <n>] [--offset <n>]
   standfast project create <name> [--slug <slug>]
 
-  standfast doc ls    --project <id>
+  standfast doc ls    --project <id> [--limit <n>] [--offset <n>]
   standfast doc push  <file.md…> --project <id> [--path <stored-name>]
+  standfast doc rm    <document-id>              the explicit delete; sync never deletes
 
-  standfast atom ls   --project <id>
+  standfast sync [dir] [--accept]                one-shot folder → server sync (standfast.sync.json)
+  standfast sync status [dir]                    print the plan, change nothing
+  standfast sync resolve <path> --take-local | --take-remote [dir]
 
-  standfast egress    --project <id> [--events] [--limit <n>]
+  standfast atom ls   --project <id> [--limit <n>] [--offset <n>]
+
+  standfast queue     --project <id> [--kind <kind>] [--document <id>] [--limit <n>] [--offset <n>]
+  standfast next      --project <id> [--kind <kind>] [--document <id>]
+  standfast ratify    <atom-id> [--supersedes <atom-id>]
+  standfast reject    <atom-id> [--reason <reason>] [--note <text>]
+  standfast retire    <atom-id>
+  standfast ratification --project <id> --older-than <7d|36h|90m|900s|seconds>
+
+  standfast findings ls      --project <id> [--status <state>] [--limit <n>] [--offset <n>]
+  standfast findings resolve <finding-id> --accept | --dismiss
+
+  standfast egress    --project <id> [--events [--limit <n>] [--offset <n>]]
 
   standfast export [directory]        full Markdown export, yours to keep
 
@@ -52,10 +70,23 @@ const ROUTES: Record<string, Handler> = {
   "doc ls": commands.documentList,
   "doc list": commands.documentList,
   "doc push": commands.documentPush,
+  "doc rm": commands.documentRemove,
+  sync: syncRun,
+  "sync status": syncStatus,
+  "sync resolve": syncResolve,
   "atom ls": commands.atomList,
+  queue: commands.queueList,
+  next: commands.queueNext,
+  ratify: commands.atomRatify,
+  reject: commands.atomReject,
+  retire: commands.atomRetire,
+  ratification: commands.ratification,
   egress: commands.egressList,
   "atom list": commands.atomList,
-  export: commands.exportAll,
+  "findings ls": commands.findingsList,
+  "findings list": commands.findingsList,
+  "findings resolve": commands.findingsResolve,
+  export: exportAll,
 };
 
 export type RunDeps = {
@@ -63,7 +94,15 @@ export type RunDeps = {
   fetch?: typeof globalThis.fetch;
 };
 
-const OPTIONS = {
+/**
+ * Exported for the test that reconciles this map against the flags the
+ * commands actually read. `parseArgs` is strict, so a flag read by a command
+ * but missing here does not degrade — it rejects the whole invocation before
+ * the command runs, and the documented flag becomes unusable. That is silent
+ * until somebody types it, which is exactly the kind of gap a test should
+ * hold shut.
+ */
+export const OPTIONS = {
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -72,6 +111,26 @@ const OPTIONS = {
   slug: { type: "string" },
   project: { type: "string" },
   path: { type: "string" },
+  status: { type: "string" },
+  kind: { type: "string" },
+  document: { type: "string" },
+  supersedes: { type: "string" },
+  reason: { type: "string" },
+  note: { type: "string" },
+  // Hyphenated, so it reaches `commands.ts` as `ctx.flags["older-than"]`. It
+  // deliberately has no default — see `commands.ts` `ratification`.
+  "older-than": { type: "string" },
+  accept: { type: "boolean" },
+  dismiss: { type: "boolean" },
+  events: { type: "boolean" },
+  // The two answers `sync resolve` accepts; exactly one must be passed.
+  "take-local": { type: "boolean" },
+  "take-remote": { type: "boolean" },
+  // Counts, but `parseArgs` has no numeric type: it hands back the raw string,
+  // and `pageQuery` in commands.ts is the single place that turns either into
+  // a number and refuses it if it is not one.
+  limit: { type: "string" },
+  offset: { type: "string" },
 } as const;
 
 function parse(argv: string[]) {

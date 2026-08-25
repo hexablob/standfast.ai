@@ -1,0 +1,33 @@
+-- A canonical atom can be withdrawn without a successor.
+--
+-- `docs/15-ratification.md` (*Open*) named this the first thing a reviewer hits
+-- that the model cannot express: a decision the project has genuinely abandoned,
+-- with nothing replacing it. `supersede` needs a successor by construction, and
+-- until now the only other terminal state was `rejected`.
+--
+-- **Why a fifth status rather than a `canonical → rejected` transition.** The
+-- cheaper change was to let a human reject an atom that had already been
+-- ratified. It was rejected because `rejected` has a job: it means *a human
+-- looked at a proposal and said no*, and that is the signal
+-- `docs/12-evaluation.md` measures extraction precision with. A withdrawal is
+-- not an extraction failure — the atom was right, and the world moved on. Folding
+-- the two together would inflate the rejection rate with non-failures and make
+-- every future precision number carry a correction that somebody has to remember
+-- to apply. A status is cheaper than a footnote on every query, forever.
+--
+-- `retired` is terminal, reachable only from `canonical`, and only by a human.
+-- Postgres cannot express a transition in a check constraint, so the guard is
+-- the `WHERE status = 'canonical'` in `retireAtom` plus the `atom_events` row
+-- that records who did it — the same shape `ratifyAtom` uses, and the same
+-- reason its own transition guard lives in a `WHERE` rather than a trigger.
+--
+-- Retrieval needs no change and that is the point of choosing this vocabulary:
+-- `packages/db/src/repositories/retrieval.ts` already filters `status =
+-- 'canonical'`, so a retired atom stops being served the moment it is retired,
+-- without a single call site learning a new word.
+ALTER TYPE "public"."atom_status" ADD VALUE 'retired';--> statement-breakpoint
+
+-- The event that records the act. `atom_events` is the ledger the ratification
+-- throughput metric reads, and a decision with no event is work the metric
+-- cannot see.
+ALTER TYPE "public"."atom_event" ADD VALUE 'retired';

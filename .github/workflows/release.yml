@@ -1,0 +1,96 @@
+name: release
+
+# Tags name releases; nothing here bumps a version. Every package ships at its
+# committed version and the attestation binds the tarball digest — which is
+# what makes a release verifiable rather than merely numbered.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Actions are pinned by commit SHA, not by tag. A tag is mutable; a supply
+# chain that can be moved under you is not pinned (docs/02-principles.md, 12).
+env:
+  NODE_VERSION: "26"
+
+permissions: {}
+
+jobs:
+  attest:
+    name: pack, attest, verify
+    runs-on: ubuntu-latest
+    # Scoped to this one job: id-token and attestations are what Sigstore
+    # signing needs; nothing in this workflow writes to the repository.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm exec tsc -b
+
+      # Only the Apache-2.0 packages are ever packed: @standfast/mcp, cli and
+      # sdk. The AGPL-3.0-only packages (core, api, db, worker) are the product
+      # and never leave as tarballs. The repository .npmrc sets
+      # `provenance=true`, which is a publish-time setting: it has no effect on
+      # `pnpm pack`. Provenance for these tarballs is the attestation below.
+      - name: Pack the three Apache-2.0 packages
+        run: |
+          mkdir -p dist-release
+          for pkg in mcp cli sdk; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist-release")
+          done
+
+      # If an AGPL package ever sweeps into the release, the count moves and
+      # the job dies here, before anything is signed.
+      - name: Exactly three tarballs
+        run: |
+          test "$(ls dist-release/*.tgz | wc -l)" -eq 3
+          ls -l dist-release
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist-release/*.tgz
+
+      # Phase 4 exit criterion 3: a release job that fails on an unsigned or
+      # unattested artifact (docs/14-roadmap.md). Verification is the
+      # criterion, not attestation — signing is easy, refusing the unsigned is
+      # the control.
+      - name: Verify every tarball against this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for t in dist-release/*.tgz; do
+            gh attestation verify "$t" --repo "$GITHUB_REPOSITORY"
+          done
+
+      # The negative lane: corrupt a copy by one byte and require verification
+      # to refuse it. If this step ever sees a corrupted artifact verify, the
+      # attestation is not binding the digest and the job is theatre.
+      - name: A corrupted artifact must fail verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          first="$(ls dist-release/*.tgz | head -1)"
+          cp "$first" "$RUNNER_TEMP/corrupted.tgz"
+          printf 'x' >> "$RUNNER_TEMP/corrupted.tgz"
+          if gh attestation verify "$RUNNER_TEMP/corrupted.tgz" --repo "$GITHUB_REPOSITORY"; then
+            echo "::error::a corrupted artifact passed verification — the attestation is not binding the digest"
+            exit 1
+          fi
+          echo "Corrupted copy refused, as it must be."
+
+      # There is deliberately no `npm publish` here — not even gated behind an
+      # environment. Registry publication is forbidden while the phase-3 kill
+      # metric is unmeasured (docs/14-roadmap.md, phase 4): absence is the
+      # control, not an approval someone can click through.

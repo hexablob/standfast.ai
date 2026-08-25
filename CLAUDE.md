@@ -43,20 +43,62 @@ tree implies a runtime dependency that does not exist.
 
 ## Current phase
 
-Phase 0 is complete — monorepo, core schema with RLS, CRUD for projects,
-documents and atoms, auth, the CLI, and the MCP server with three tools.
+Phases 0, 1 and 2 are built. Phase 0 shipped the monorepo, the core schema with
+RLS, CRUD for projects, documents and atoms, auth, the CLI, and the first three
+MCP tools. Phase 1 shipped extraction end to end — the schema invariants, the
+evaluation harness, the queue, worker and pipeline, and in 1d the real providers
+behind the three ports. Phase 2 shipped retrieval: the indexes, four candidate
+generators of which three run, RRF, MMR and budgeted assembly in
+`packages/core`, the `context` and `search` tools, and the `SessionStart` and
+`UserPromptSubmit` hooks.
 
-Phase 1 is extraction. `docs/14-roadmap.md` splits it into 1a to 1d, and 1a, 1b
-and 1c have shipped: the schema invariants, the evaluation harness, and the
-queue, worker and pipeline. **There is still no intelligence in the system.**
-The three ports the pipeline runs on — extractor, embedder, dedup judge — are
-satisfied by deterministic fakes, which is what lets the whole thing run in CI
-with no network and no secrets. Nothing in this repository calls a model.
+**Providers are bound, and the egress allowlist governs them.**
+`packages/worker/src/adapters/` holds `AnthropicExtractor` and `AnthropicJudge`,
+`VoyageEmbedder`, and `BgeEmbedder` for a deployment that runs its own model.
+`packages/worker/src/main.ts` `resolvePorts` parses
+`STANDFAST_EGRESS_ALLOWLIST` before it constructs anything and refuses at
+start-up: an allowlist with only fakes behind it, a mixed real-and-fake
+configuration, a prompt-version mismatch, and any purpose without an entry. The
+read path has its own resolution in `packages/api/src/ports.ts`. The
+deterministic fakes remain, and they are what still lets the whole thing run in
+CI with no network and no secrets.
 
-Phase 1d is what remains: binding real providers behind those three ports, and
-the outbound allowlist that governs them. 1d opens the first outbound socket
-here, so the allowlist and its start-up refusal land with it, not in phase 2.
-`packages/worker/src/main.ts` `resolvePorts` is where both go.
+What phases 1 and 2 have *not* done is claim their exit criteria. Extraction
+precision, retrieval precision under budget and the declared p95 are all
+unmeasured, because the corpus and its human labels do not exist. That is the
+binding constraint on this project, not more code.
+
+Phase 3 shipped reconciliation — the moat, and the sixth and last MCP tool the
+specification names. `docs/07-reconciliation.md` owns it. The rules that hold it
+together: no field of `reconcile` accepts source code; the findings tables are in
+`packages/db/src/schema/wire-allowlist.ts`; the rationale is the only free-text
+field anywhere on the path and `docs/13-threat-model.md` still has "is a length
+cap sufficient, or does free text have no place here at all" open against it;
+prompts are written to falsify, never to confirm; findings are recorded and never
+acted on; and only a human resolves one. **Its exit criterion is not met.** The
+false-positive rate is unmeasured, `eval/baselines.json` keeps `baseline: null`,
+and `pnpm eval reconciliation` reports SKIPPED. Built is not measured.
+
+Phase 4 is in progress — distribution and the ratification loop, which exists
+because the bottleneck is a human reading provisional atoms
+(`docs/02-principles.md`, 5). `docs/15-ratification.md` owns the behaviour and
+`docs/14-roadmap.md` the boundaries. Two questions are now settled: retiring a
+canonical atom with no successor uses a **fifth status, `retired`**, rather than
+a `canonical → rejected` transition, because `rejected` must keep meaning "a
+human said no to a proposal" — the signal extraction precision is measured with;
+and the **ratification venue is the CLI**.
+
+Below the surface: migrations 0011 (the closed rejection vocabulary, and the
+labelled corpus that falls out of ordinary use), 0012 (`retired`), and 0013,
+which makes "only a human decides" a constraint on `atom_events` rather than a
+predicate in a repository — an agent could write a `rejected` event until it
+landed. `packages/db` has `rejectAtom`, `retireAtom`, ratify-with-`supersedes`,
+and the queue and throughput queries.
+
+**Registry publication does not happen in phase 4.** A server that serves almost
+nothing spends a first impression that cannot be spent twice, and the kill metric
+above is unmeasured. The plugin manifest, the packaging and the release job are
+in scope; publishing is not.
 
 Do not flip `extractorAvailable()` in `eval/src/preconditions.ts`. A fake
 extractor is not an extractor, and a bar set against a bullet-splitter could
@@ -69,7 +111,8 @@ four bars are `null` in `eval/baselines.json` on purpose; do not fill one in
 without a corpus to set it against.
 
 `docs/14-roadmap.md` owns the phase boundaries and the exit criteria; read it
-before starting phase-1 work, `docs/05-extraction.md` for the extraction
+before starting phase-3 work, `docs/07-reconciliation.md` for the
+reconciliation loop, `docs/05-extraction.md` for the extraction
 pipeline, and `docs/12-evaluation.md` before touching anything under `eval/`.
 
 ## Do not

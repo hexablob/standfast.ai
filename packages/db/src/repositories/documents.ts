@@ -1,9 +1,14 @@
-import { contentHash, type Section, sectionMarkdown } from "@standfast/core";
+import {
+  contentHash,
+  locateQuote,
+  type Section,
+  sectionMarkdown,
+} from "@standfast/core";
 import { asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { Db } from "../client.js";
 import type { ExtractionEnqueue } from "../extraction.js";
 import { PAGE_TOTAL, type Page, type Paged, paged } from "../pagination.js";
-import { documentSections, documents } from "../schema/knowledge.js";
+import { atoms, documentSections, documents } from "../schema/knowledge.js";
 import { requireExtractorActor } from "./actors.js";
 
 export type Document = typeof documents.$inferSelect;
@@ -68,16 +73,18 @@ export async function listSections(
 }
 
 /**
- * What one write did to a document's sections, as three sets of section ids.
+ * What one write did to a document's sections, as four sets of section ids.
  *
- * `inserted` is the extraction work list: those are the only sections whose
- * content is new to the system. `deleted` is what the write destroyed, and the
- * atoms that cited those sections went with them. `matched` cost nothing and is
- * the number that should be large.
+ * `inserted` and `updated` together are the extraction work list: an inserted
+ * section is new to the system, an updated one kept its row — and so its
+ * atoms — while its text moved on. `deleted` is what the write destroyed, and
+ * the atoms that cited those sections went with them. `matched` cost nothing
+ * and is the number that should be large.
  */
 export type SectionChange = {
   matched: string[];
   inserted: string[];
+  updated: string[];
   deleted: string[];
 };
 
@@ -88,12 +95,25 @@ export type PutDocumentResult = {
   /**
    * The sections a `section.extract` job was sent for.
    *
-   * Equal to `sections.inserted` today. Named separately because the enqueue
-   * rule and the diff are two different facts that happen to coincide: when the
-   * repair sweep for orphaned suppressions arrives it will enqueue sections
-   * that were not inserted, and `inserted` must keep meaning what it says.
+   * Equal to `sections.inserted` plus `sections.updated` today. Named
+   * separately because the enqueue rule and the diff are two different facts
+   * that happen to coincide: when the repair sweep for orphaned suppressions
+   * arrives it will enqueue sections that were neither, and the diff fields
+   * must keep meaning what they say.
    */
   enqueued: string[];
+
+  /**
+   * Atoms whose section was rewritten in place and whose `source_quote` no
+   * longer appears in the new body.
+   *
+   * The atom itself is untouched: deciding that a decision no longer holds is
+   * a ratification-shaped act, and no status means "the prose changed
+   * underneath it" — that vocabulary is phase 1's to add, not this path's to
+   * improvise. Recorded, never acted on, and dropped by the HTTP route; this
+   * is a surface for ratification tooling, not for the wire.
+   */
+  staleCitations: string[];
 };
 
 /**
@@ -145,7 +165,12 @@ export async function putDocument(
     throw new Error("upsert returned no row");
   }
 
-  const sections = await reconcileSections(db, orgId, document.id, input.body);
+  const { sections, staleCitations } = await reconcileSections(
+    db,
+    orgId,
+    document.id,
+    input.body,
+  );
 
   // The enqueue is here rather than in the route, and that is the point of
   // taking the port as an argument. The HTTP endpoint is not the only writer:
@@ -158,7 +183,11 @@ export async function putDocument(
   // notice: reconcileSections already knows exactly which hashes moved, so an
   // unchanged document produces an empty list and sends nothing.
   const enqueued: string[] = [];
-  if (sections.inserted.length > 0) {
+  // Updated sections re-extract at their new text. Re-extraction can propose
+  // statements the section's surviving atoms already carry; the dedup pass —
+  // threshold, judge, suppressions — is the mitigation, not this enqueue.
+  const extractable = [...sections.inserted, ...sections.updated];
+  if (extractable.length > 0) {
     // Resolved here, not carried in from the route. docs/05-extraction.md
     // declines the pushing human's actor for this payload: it attributes a
     // model's output to a person, which is the one attribution error this
@@ -169,8 +198,8 @@ export async function putDocument(
     // this transaction shares a created_on and pg-boss breaks the tie on a
     // uuid — which makes first-writer-wins dedup a coin flip between two
     // sections of the same document.
-    const total = sections.inserted.length;
-    for (const [index, sectionId] of sections.inserted.entries()) {
+    const total = extractable.length;
+    for (const [index, sectionId] of extractable.entries()) {
       await extraction.enqueue(
         db,
         {
@@ -186,7 +215,7 @@ export async function putDocument(
     }
   }
 
-  return { document, sections, enqueued };
+  return { document, sections, enqueued, staleCitations };
 }
 
 /**
@@ -209,7 +238,7 @@ async function reconcileSections(
   orgId: string,
   documentId: string,
   body: string,
-): Promise<SectionChange> {
+): Promise<{ sections: SectionChange; staleCitations: string[] }> {
   const existing = await db
     .select()
     .from(documentSections)
@@ -231,12 +260,12 @@ async function reconcileSections(
   const matched: string[] = [];
   const claimed = new Set<string>();
   const renumber: { id: string; ordinal: number }[] = [];
-  const create: Section[] = [];
+  const residual: Section[] = [];
 
   for (const section of next) {
     const row = available.get(section.sectionHash)?.shift();
     if (!row) {
-      create.push(section);
+      residual.push(section);
       continue;
     }
     claimed.add(row.id);
@@ -244,6 +273,36 @@ async function reconcileSections(
     if (row.ordinal !== section.ordinal) {
       renumber.push({ id: row.id, ordinal: section.ordinal });
     }
+  }
+
+  // Pass 2 — section identity for the text that moved on. An edited section
+  // has a new hash, so pass 1 cannot see it, and deleting its row would
+  // cascade to its atoms — a whitespace fix erasing ratified knowledge. The
+  // fallback key is `(ordinal, heading_path)`, exact on both parts, and unique
+  // by construction on either side because `(document_id, ordinal)` is unique
+  // — so this is a lookup, not a multiset. A section that was edited *and*
+  // moved misses the key and falls through to delete-and-insert by design: a
+  // looser rule could marry the wrong rows, and a wrong identity is worse
+  // than a lost one.
+  const identity = new Map<string, DocumentSection>();
+  for (const row of existing) {
+    if (!claimed.has(row.id)) {
+      identity.set(JSON.stringify([row.ordinal, row.headingPath]), row);
+    }
+  }
+
+  const rewrite: { id: string; section: Section }[] = [];
+  const create: Section[] = [];
+  for (const section of residual) {
+    const row = identity.get(
+      JSON.stringify([section.ordinal, section.headingPath]),
+    );
+    if (!row) {
+      create.push(section);
+      continue;
+    }
+    claimed.add(row.id);
+    rewrite.push({ id: row.id, section });
   }
 
   const deleted = existing
@@ -256,22 +315,36 @@ async function reconcileSections(
       .where(inArray(documentSections.id, deleted));
   }
 
-  if (renumber.length > 0) {
+  if (renumber.length > 0 || rewrite.length > 0) {
     // Deferred for this transaction only, and only when something actually
     // moves. A section going from ordinal 4 to ordinal 2 collides with the row
     // still sitting at 2, and no ordering of the updates avoids it in general —
     // a rotation has no safe first move. The constraint is DEFERRABLE INITIALLY
     // IMMEDIATE, so this is the one writer that gets the slack, and it is still
-    // checked before commit.
+    // checked before commit. Rewrites take the slack too: their ordinal writes
+    // are no-ops today, but an update that touches the column gets the same
+    // treatment rather than an ordering assumption.
     await db.execute(
       sql`set constraints "document_sections_document_ordinal_key" deferred`,
     );
-    for (const move of renumber) {
-      await db
-        .update(documentSections)
-        .set({ ordinal: move.ordinal })
-        .where(eq(documentSections.id, move.id));
-    }
+  }
+
+  for (const move of renumber) {
+    await db
+      .update(documentSections)
+      .set({ ordinal: move.ordinal })
+      .where(eq(documentSections.id, move.id));
+  }
+
+  for (const { id, section } of rewrite) {
+    await db
+      .update(documentSections)
+      .set({
+        body: section.body,
+        sectionHash: section.sectionHash,
+        ordinal: section.ordinal,
+      })
+      .where(eq(documentSections.id, id));
   }
 
   let inserted: string[] = [];
@@ -292,7 +365,44 @@ async function reconcileSections(
     inserted = created.map((row) => row.id);
   }
 
-  return { matched, inserted, deleted };
+  // Re-anchoring, deliberately *after* the body rewrites: the 0002 BEFORE
+  // UPDATE trigger verifies a span against the section body as stored, so the
+  // body must already be the new one when a span moves. `locateQuote` counts
+  // Unicode code points — the units every span was written in — and takes the
+  // first occurrence, which is its existing contract.
+  const staleCitations: string[] = [];
+  for (const { id, section } of rewrite) {
+    const cited = await db
+      .select({
+        id: atoms.id,
+        sourceQuote: atoms.sourceQuote,
+        sourceSpan: atoms.sourceSpan,
+      })
+      .from(atoms)
+      .where(eq(atoms.sectionId, id));
+
+    for (const atom of cited) {
+      const span = locateQuote(section.body, atom.sourceQuote);
+      if (!span) {
+        // The quote is gone. The atom is neither deleted nor demoted — only a
+        // human decides that a decision no longer holds — merely reported.
+        staleCitations.push(atom.id);
+        continue;
+      }
+      const range = `[${span.start},${span.end})`;
+      if (range !== atom.sourceSpan) {
+        await db
+          .update(atoms)
+          .set({ sourceSpan: range })
+          .where(eq(atoms.id, atom.id));
+      }
+    }
+  }
+
+  return {
+    sections: { matched, inserted, updated: rewrite.map((r) => r.id), deleted },
+    staleCitations,
+  };
 }
 
 export async function deleteDocument(
@@ -304,4 +414,39 @@ export async function deleteDocument(
     .where(eq(documents.id, documentId))
     .returning({ id: documents.id });
   return rows.length > 0;
+}
+
+/** One row of the sync manifest: enough to diff against, nothing to read. */
+export type DocumentManifestEntry = {
+  id: string;
+  path: string;
+  contentHash: string;
+};
+
+/**
+ * The manifest `standfast sync` diffs against: `(id, path, content_hash)` per
+ * document and nothing else. The narrow SELECT is the guarantee — the body is
+ * never read off the table, so no layer above this one has to remember to
+ * strip it.
+ */
+export async function listDocumentManifest(
+  db: Db,
+  projectId: string,
+  page: Page,
+): Promise<Paged<DocumentManifestEntry>> {
+  const rows = await db
+    .select({
+      id: documents.id,
+      path: documents.path,
+      contentHash: documents.contentHash,
+      pageTotal: PAGE_TOTAL,
+    })
+    .from(documents)
+    .where(eq(documents.projectId, projectId))
+    // `path` is unique per project, so it is already a total order.
+    .orderBy(documents.path)
+    .limit(page.limit)
+    .offset(page.offset);
+
+  return paged(rows, page);
 }

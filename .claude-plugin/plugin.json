@@ -1,0 +1,43 @@
+{
+  "name": "standfast",
+  "displayName": "Standfast",
+  "version": "0.0.0",
+  "description": "Shared knowledge layer for coding agents: the standfast MCP server plus the session hooks that give it a cold start and a follow-up.",
+  "author": {
+    "name": "Standfast",
+    "url": "https://standfast.ai"
+  },
+  "homepage": "https://standfast.ai",
+  "repository": "https://github.com/hexablob/standfast.ai",
+  "license": "Apache-2.0",
+  "keywords": ["knowledge", "mcp", "context", "conventions"],
+  "mcpServers": {
+    "standfast": {
+      "command": "standfast-mcp"
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "standfast-hook SessionStart" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "standfast-hook UserPromptSubmit" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "standfast-hook PostToolUse" }
+        ]
+      }
+    ]
+  }
+}

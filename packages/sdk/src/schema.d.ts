@@ -349,6 +349,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/documents/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The sync manifest: `(id, path, contentHash)` per document, ordered by path. Bodies are never selected. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Rows per page, at most 200. */
+                    limit?: number;
+                    offset?: number | null;
+                };
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Manifest */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PagedDocumentManifestEntry"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/documents/{documentId}": {
         parameters: {
             query?: never;
@@ -731,10 +791,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Promotes a provisional atom to canonical. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message. */
+        /** @description Promotes a provisional atom to canonical, optionally superseding the atom it replaces. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message. */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    supersedes?: string;
+                };
                 header?: never;
                 path: {
                     atomId: string;
@@ -1085,6 +1147,486 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/atoms/{atomId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Rejects a provisional atom. Terminal. The optional reason is a closed vocabulary, and it is what turns a reviewer's ordinary work into the labelled corpus extraction precision is measured against. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    atomId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["RejectAtom"];
+                };
+            };
+            responses: {
+                /** @description Rejected */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Atom"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The calling actor is an agent */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The atom is not provisional */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/atoms/{atomId}/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Withdraws a canonical atom that has no successor. Terminal, and deliberately not a rejection: `rejected` means a human said no to a proposal, and a retired atom was right until the world moved on. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    atomId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Retired */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Atom"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The calling actor is an agent */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The atom is not canonical */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The provisional queue, oldest first, with the section each atom was projected from. The section body is returned whole: provenance is what the decision rests on, and a reviewer who has to fetch it separately is a reviewer who stops checking it. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Rows per page, at most 200. */
+                    limit?: number;
+                    offset?: number | null;
+                    kind?: "decision" | "convention" | "constraint";
+                    documentId?: string;
+                };
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The queue */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PagedQueueItem"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/ratification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Ratification throughput: the median time from proposal to decision, and how much of the backlog is older than an age you name. The age is required because no bar has been chosen for this metric, and a default here would be one invented by accident. */
+        get: {
+            parameters: {
+                query: {
+                    olderThanSeconds: string;
+                };
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Throughput and backlog */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Ratification"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/reconciliations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Records one run of verdicts on whether code still honors the atoms that govern it. No field accepts source code. Verdicts are recorded and never acted on: nothing here edits code, opens a pull request, or changes an atom. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ReconcileRequest"];
+                };
+            };
+            responses: {
+                /** @description Recorded */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReconcileAck"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Violates a constraint on the record */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The human queue. Filter by status; open findings are the violations waiting on an answer. The rationale is never served — it is written for the human reviewing the queue, not for the next agent to read. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Rows per page, at most 200. */
+                    limit?: number;
+                    offset?: number | null;
+                    status?: "recorded" | "open" | "accepted" | "dismissed";
+                };
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Findings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PagedFinding"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/findings/{findingId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description A human answers one open finding. Only a human actor may do this; the composite foreign key enforces it, this check supplies the error message. Nothing is deleted — a dismissed finding is the numerator of this product's own kill metric. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    findingId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ResolveFinding"];
+                };
+            };
+            responses: {
+                /** @description Resolved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Finding"];
+                    };
+                };
+                /** @description Missing or invalid API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The calling actor is an agent */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not found, or belongs to another org */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The finding is not open */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1142,6 +1684,20 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        PagedDocumentManifestEntry: {
+            items: components["schemas"]["DocumentManifestEntry"][];
+            /** @description Rows matching the query, not rows returned. */
+            total: number;
+            returned: number;
+            /** @description Whether rows exist beyond this page. */
+            truncated: boolean;
+        };
+        DocumentManifestEntry: {
+            /** Format: uuid */
+            id: string;
+            path: string;
+            contentHash: string;
+        };
         PutDocument: {
             path: string;
             title?: string | null;
@@ -1188,14 +1744,24 @@ export interface components {
             /** @enum {string} */
             kind: "decision" | "convention" | "constraint";
             /** @enum {string} */
-            status: "provisional" | "canonical" | "rejected" | "superseded";
+            status: "provisional" | "canonical" | "rejected" | "superseded" | "retired";
             sourceQuote: string;
+            sourceSpan: components["schemas"]["Span"];
             /** Format: uuid */
             ratifiedBy: string | null;
             /** Format: date-time */
             ratifiedAt: string | null;
+            /** Format: uuid */
+            supersededBy: string | null;
+            /** @enum {string|null} */
+            ratifiedByKind?: "human" | "agent" | null;
+            ratifiedByName?: string | null;
             /** Format: date-time */
             createdAt: string;
+        };
+        Span: {
+            start: number;
+            end: number;
         };
         CreateAtom: {
             /** Format: uuid */
@@ -1206,10 +1772,7 @@ export interface components {
             /** @enum {string} */
             kind: "decision" | "convention" | "constraint";
             sourceQuote: string;
-            sourceSpan: {
-                start: number;
-                end: number;
-            };
+            sourceSpan: components["schemas"]["Span"];
         };
         EgressSummary: {
             /** @enum {string} */
@@ -1250,10 +1813,13 @@ export interface components {
         };
         AtomStats: {
             provisional: number;
+            retired: number;
             canonical: number;
             rejected: number;
             superseded: number;
             awaitingRatification: number;
+            openFindings: number;
+            canonicalUnchecked: number;
         };
         ContextResponse: {
             items: components["schemas"]["PackedAtom"][];
@@ -1324,6 +1890,123 @@ export interface components {
             mode: "lexical" | "semantic" | "hybrid";
             /** @default 20 */
             limit: number;
+        };
+        RejectAtom: {
+            /** @enum {string} */
+            reason?: "not_true" | "duplicate" | "not_a_decision" | "wrong_severity" | "document_is_wrong";
+            reasonNote?: string;
+        };
+        PagedQueueItem: {
+            items: components["schemas"]["QueueItem"][];
+            /** @description Rows matching the query, not rows returned. */
+            total: number;
+            returned: number;
+            /** @description Whether rows exist beyond this page. */
+            truncated: boolean;
+        };
+        QueueItem: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "decision" | "convention" | "constraint";
+            statement: string;
+            sourceQuote: string;
+            sourceSpan: components["schemas"]["Span"];
+            /** @enum {string} */
+            status: "provisional" | "canonical" | "rejected" | "superseded" | "retired";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            proposedAt: string;
+            /** Format: uuid */
+            proposedById: string | null;
+            /** @enum {string|null} */
+            proposedByKind: "human" | "agent" | null;
+            proposedByName: string | null;
+            /** Format: uuid */
+            documentId: string;
+            documentPath: string;
+            /** Format: uuid */
+            sectionId: string;
+            sectionOrdinal: number;
+            sectionHeadingPath: string[];
+            /** @description The whole section. Never truncated. */
+            sectionBody: string;
+        };
+        Ratification: {
+            /** @description Provisional atoms in the project. Never a filtered count. */
+            backlog: number;
+            /** Format: date-time */
+            oldestProposedAt: string | null;
+            queueAgeSeconds: number | null;
+            /** @description Atoms ratified, rejected or retired in the window. */
+            decided: number;
+            /** @description Null when nothing was decided. Zero would be a lie. */
+            medianSecondsToDecision: number | null;
+            backlogOlderThan: number;
+            /** @description Null on an empty backlog: 0/0 is not 0. */
+            backlogShareOlderThan: number | null;
+            /** @description Every provisional atom's age, ascending, so a caller can answer for any threshold without this route committing to one. */
+            backlogAgesSeconds: number[];
+        };
+        ReconcileAck: {
+            /** Format: uuid */
+            runId: string;
+            recorded: number;
+            open: number;
+        };
+        ReconcileRequest: {
+            /**
+             * @default agent
+             * @enum {string}
+             */
+            trigger: "post_edit" | "session_end" | "explicit" | "agent" | "atom_ratified" | "stale";
+            items: components["schemas"]["ReconcileItem"][];
+        };
+        ReconcileItem: {
+            /** Format: uuid */
+            atomId: string;
+            /** @enum {string} */
+            verdict: "honored" | "violated" | "not_applicable" | "unverifiable";
+            filePath: string;
+            lineStart?: number;
+            lineEnd?: number;
+            rationale?: string;
+        };
+        PagedFinding: {
+            items: components["schemas"]["Finding"][];
+            /** @description Rows matching the query, not rows returned. */
+            total: number;
+            returned: number;
+            /** @description Whether rows exist beyond this page. */
+            truncated: boolean;
+        };
+        Finding: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            projectId: string;
+            /** Format: uuid */
+            runId: string;
+            /** Format: uuid */
+            atomId: string;
+            /** @enum {string} */
+            verdict: "honored" | "violated" | "not_applicable" | "unverifiable";
+            filePath: string;
+            lineStart: number | null;
+            lineEnd: number | null;
+            /** @enum {string} */
+            status: "recorded" | "open" | "accepted" | "dismissed";
+            /** Format: uuid */
+            resolvedBy: string | null;
+            /** Format: date-time */
+            resolvedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ResolveFinding: {
+            /** @enum {string} */
+            status: "accepted" | "dismissed";
         };
     };
     responses: never;

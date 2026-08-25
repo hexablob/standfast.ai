@@ -1,12 +1,17 @@
 <!-- docs/10-sync-daemon.md -->
 # Sync daemon
 
-> **Status: designed, not implemented.** No sync daemon exists. Today the
-> whole write path for documents is `standfast doc push <file.md>`, which uploads
-> a file a developer named, unconditionally. Everything below is decided;
-> none of it is built. `docs/14-roadmap.md` places it in phase 4, and one
-> dependency on phase 1 is named under *What happens to atoms* — it is a
-> blocking dependency, not a preference.
+> **Status: the one-shot is built.** `standfast sync` is the intended write
+> path: a CLI one-shot a human invokes, implemented in `packages/cli` —
+> `sync-plan.ts` is the pure planner, `sync.ts` the filesystem and network
+> around it. No watcher process exists; *daemon* below names the design, and
+> the one-shot is its first and only trigger. `standfast doc push` remains the
+> single-file escape hatch, and whether it survives is still under *Open*.
+> The blocking dependency named under *What happens to atoms* is discharged:
+> `putDocument` matches sections by `section_hash`, then matches the remainder
+> by `(ordinal, heading_path)`, so an edited section keeps its row, its id and
+> its atoms, and only a section that was edited *and* moved falls back to
+> delete-and-insert.
 
 ## What this document fixes
 
@@ -95,6 +100,13 @@ project:
   ]
 }
 ```
+
+The name is settled: `standfast.sync.json`, its own file rather than a key
+inside `standfast.json` — that name is already the export manifest's, and
+`standfast export` treats a directory holding one as its own to sweep, so one
+file serving two features would let a sync scope be mistaken for an ownership
+sentinel. One folder, one project; a monorepo syncing into several projects is
+several folders.
 
 **There is no `exclude` key.** `docs/02-principles.md` (9) — allowlist, never
 denylist, for anything that leaves the machine — and this is the document
@@ -226,6 +238,11 @@ successfully. That is the **base**. It is a hash, not a copy of the body — the
 folder holds the body, and a second copy would make the daemon a second store
 of the customer's documents.
 
+The remote half of the comparison comes from
+`GET /v1/projects/{projectId}/documents/manifest`: `(id, path, contentHash)`
+per document, paged, bodies never selected — fetching every body to learn its
+hash would be the expensive way to ask a yes/no question.
+
 | local vs base | server vs base | Action |
 | --- | --- | --- |
 | unchanged | unchanged | nothing |
@@ -244,7 +261,7 @@ would corrupt data the first time someone used the CLI it ships alongside.
 does not overwrite, because overwriting is destructive twice — it discards
 what the other writer wrote, and, because atoms cascade from sections, it
 discards atoms projected from it. Resolution is a human act:
-`standfast sync resolve --take-local <path>` uploads and re-bases;
+`standfast sync resolve <path> --take-local` uploads and re-bases;
 `--take-remote` re-bases without uploading, leaving the folder untouched and
 accepting that the next local edit conflicts again.
 
@@ -281,14 +298,14 @@ network mount that dropped, or a scan that ran while a build was rewriting a
 directory. Every one of those resolves itself in seconds; a cascade does not.
 
 So absence marks the document *unseen locally* in the journal and reports it.
-Removing it from the server is `standfast sync prune`, which lists what it would
-delete and asks.
-
-A guard applies even to that explicit path: if a scan finds more than a small
-fraction of tracked documents missing at once, the daemon reports and stops
-rather than offering to prune all of them. That shape is a branch switch or a
-failed mount, not a sequence of edits. The fraction is a number nobody has
-measured, and it goes to *Open* rather than being invented here.
+Removing it from the server is `standfast doc rm <id>` — deliberate, one
+document, named by its id. The bulk `sync prune` this section once promised is
+not built: a command that turns a list of absences into a list of deletions is
+exactly the shape of the branch-switch incident above, and nobody has missed
+it yet. If it is ever built, the guard it would need applies: a scan that
+finds more than a small fraction of tracked documents missing reports and
+stops rather than offering to prune them all — and that fraction is a number
+nobody has measured, so it stays under *Open* with the prune itself.
 
 ## What happens to atoms
 
@@ -298,59 +315,66 @@ phase 1 that the current implementation would violate on the first save.
 ### A section's hash moves
 
 The section's content changed, so it needs re-extraction. What happens to
-atoms already projected from it:
+atoms already projected from it — implemented in `reconcileSections`, inside
+the same transaction as the write:
 
 - The atom's `source_quote` is checked against the new section body. If the
-  quote still appears verbatim, its `source_span` is updated and the atom
-  stands — this is what `packages/core/src/markdown.ts` counts offsets in
-  Unicode code points for.
+  quote still appears verbatim, its `source_span` is re-anchored to the first
+  occurrence and the atom stands — this is what
+  `packages/core/src/markdown.ts` counts offsets in Unicode code points for.
 - If the quote is gone, the atom's source is gone with it. It is neither
-  silently deleted nor silently kept. It is surfaced for a human, because
-  deciding that a decision no longer holds is a ratification-shaped act, and
-  an agent cannot perform one (`docs/01-thesis.md`, invariant 2).
-- **The schema cannot express that state today.** `atom_status` is
-  `provisional | canonical | rejected | superseded`; `atom_event` is
-  `proposed | ratified | rejected | superseded`. None of them means *"the
-  prose this was extracted from changed underneath it"*. Phase 1 owns the
-  addition. It is recorded here so that phase 1's schema is designed with it
-  rather than migrated for it afterwards.
+  silently deleted nor silently kept: the atom stays exactly as it was, and
+  its id is reported in `staleCitations` on the `putDocument` result, which
+  the HTTP route deliberately drops from the wire. Deciding that a decision
+  no longer holds is a ratification-shaped act, and an agent cannot perform
+  one (`docs/01-thesis.md`, invariant 2).
+- **The schema still cannot express that state, on purpose.** No
+  `atom_status` value and no `atom_event` means *"the prose this was
+  extracted from changed underneath it"*, and that vocabulary is phase 1's
+  to add. Until it rules, the stale citation is representable on the
+  internal result and nowhere else — recorded, never acted on.
 
 ### The blocking dependency
 
-`putDocument` deletes every row in `document_sections` for the document and
-re-inserts them:
+`putDocument` used to delete every row in `document_sections` for the document
+and re-insert them, so section ids were new on every write and
+`atoms.section_id`, being `on delete cascade` (`docs/04-data-model.md`), took
+every atom with them. **Every re-upload deleted every atom projected from the
+document.** `reconcileSections` in
+`packages/db/src/repositories/documents.ts` no longer does that: it matches the
+incoming sections against the stored ones by `section_hash`, keeps and
+renumbers what matches, and deletes only what does not.
 
-```ts
-await db.delete(documentSections)
-  .where(eq(documentSections.documentId, document.id));
-```
+What used to fail was the edited section. Its text changed, so its hash
+changed, so no stored row matched it, so the row was deleted and the atoms
+cascaded — intolerable under a daemon that uploads on every save: a
+whitespace fix in one paragraph discarded a week of ratification across that
+paragraph, and the throughput of that ratification is a first-class product
+metric (`docs/02-principles.md`, 5). Step 2 below closes exactly this.
 
-Section ids are therefore new on every write, and `atoms.section_id` is
-`on delete cascade` (`docs/04-data-model.md`). **Every re-upload of a document
-deletes every atom projected from it.**
-
-That is harmless in phase 0, where atoms are created by hand and there is no
-extraction to speak of. It is intolerable under a daemon that uploads on every
-save: a whitespace fix in one paragraph would discard a week of ratification
-across the whole file, and the throughput of that ratification is a
-first-class product metric (`docs/02-principles.md`, 5).
-
-The fix belongs to phase 1, and this document states the requirement so phase
-1 does not have to rediscover it. Sections are matched and updated, not
-rebuilt:
+The rule, in full, as `reconcileSections` implements it. Sections are matched
+and updated, not rebuilt:
 
 1. Match by `section_hash` first. An unchanged section keeps its row and its
    id whatever its new ordinal — which is the whole reason the hash is
    content-based rather than position-based.
-2. Then match the remainder by `(heading_path, ordinal)`, in ordinal order, so
-   an edited section keeps its identity and its atoms are re-verified rather
-   than destroyed.
+2. Then match the remainder by `(ordinal, heading_path)`, exact on both
+   parts. The key is unique on each side because `(document_id, ordinal)` is
+   unique, so this is a lookup, not a heuristic: an edited section keeps its
+   identity, is re-enqueued for extraction, and its atoms are re-anchored
+   rather than destroyed. A section that was edited *and* moved in the same
+   push misses the key and falls back to delete-and-insert by design — a
+   looser rule could marry the wrong rows, and a wrong identity is worse
+   than a lost one.
 3. Unmatched incoming sections are inserts. Unmatched existing sections are
-   deletes, and those are the only deletes that should cascade to atoms.
+   deletes, and those are the only deletes that cascade to atoms.
 
-**Until that lands, the daemon must not ship.** `standfast doc push` is a
-developer typing a command and watching the result; a daemon is the same
-destructive write, unattended, on every keystroke that reaches disk.
+All three steps have landed, and they landed together with the two halves
+that make step 2 safe: the re-anchoring above, and the claim-side hash
+comparison — a `section_extractions` row that succeeded at another hash no
+longer answers "already succeeded", so a re-enqueued edit is work, not a
+skip. The daemon no longer waits on this section. `standfast doc push` and
+the daemon are the same write, and on an edit it is no longer destructive.
 
 ### A document is deleted
 
@@ -367,9 +391,8 @@ daemon may propose deletions, and must never perform one unasked.
 
 Someone points a daemon at a repository root with `**/*.md`, and the tree
 contains `notes/2026-compensation.md`. After the upload there is no technical
-control left: the body is stored, and once phase 1 exists it is sectioned,
-extracted, embedded, and eligible to be quoted into another agent's context
-pack.
+control left: the body is stored, sectioned, extracted, embedded, and eligible
+to be quoted into another agent's context pack.
 
 The controls, in the order they fire:
 
@@ -380,7 +403,7 @@ The controls, in the order they fire:
 | 3 | the allowlist gates the read | before any read |
 | 4 | symlinks not followed, escaping paths refused | before any read |
 | 5 | first upload of a path reported distinctly from an update | at the send |
-| 6 | `sync prune` / `doc rm`, and the cascade | after |
+| 6 | `standfast doc rm`, and the cascade | after |
 
 The ordering is the point. Five of the six fire before any content leaves, and
 the sixth is cleanup. A design that leans on cleanup for privacy is a design
@@ -396,17 +419,24 @@ completes. A stub that throws is the difference between "we filter it out" and
 
 ## Trigger and packaging
 
-**Not settled.** `docs/03-architecture.md` already lists where the daemon
-lives — its own package, or a mode of the CLI — as open, and the trigger
-question is the same question seen from the other end. Both are in *Open*
-below, with the trade-offs, because `plan()` being a pure function means
-nothing is blocked by leaving them there.
+**Settled: a CLI one-shot, human-invoked.** `standfast sync` is a mode of
+`packages/cli`, not a package and not a process — nothing to install,
+supervise or debug, and it runs only while someone is watching, which is the
+condition the privacy controls are strongest under. The one-shot is the
+primitive the other trigger shapes would call: a git hook or a CI step is one
+line invoking it, and a long-running watcher, if measurement ever argues for
+one, wraps the same `plan()`. The trigger-dependent answers settle with it:
+an unreachable server fails the run loudly — exit 1, nothing uploaded, the
+journal untouched — and the debounce window is moot for a run with no
+watcher, deferred to the watcher that would need it.
 
-What is settled regardless of the answer: it is Apache-2.0, it reaches the
-server through `@standfast/sdk` over HTTPS and never touches Postgres, it
-authenticates with an API key like any other client, and it holds the journal
-and the confirmed-scope digest locally beside the CLI's own configuration
-(`XDG_CONFIG_HOME`, as `packages/cli/src/config.ts` resolves it today).
+What holds regardless: it is Apache-2.0, it reaches the server through
+`@standfast/sdk` over HTTPS and never touches Postgres, it authenticates with
+an API key like any other client, and it holds the journal and the
+confirmed-scope digest locally beside the CLI's own configuration
+(`XDG_CONFIG_HOME`, as `packages/cli/src/config.ts` resolves it today) —
+outside the repository, because two developers must not share a base, and
+outside the credential file, because logout must not destroy it.
 
 ## Considered and declined
 
@@ -445,25 +475,9 @@ Recorded so each question is asked once.
 
 ## Open
 
-- **The trigger.** Four candidates, none settled:
-
-  | Shape | For | Against |
-  | --- | --- | --- |
-  | Long-running watcher | lowest staleness; a real local loop | a process to install, supervise and debug; dies silently; runs when nobody is watching, which is the condition the privacy controls are weakest under |
-  | Git hook (`post-commit`, `post-checkout`) | syncs content that already passed review; provenance for free | misses uncommitted edits; per-clone, so it is a per-developer setting (`core.hooksPath`) and trivially bypassed |
-  | CI step on the default branch | one place, one credential, auditable; syncs what actually merged, which is the better definition of "what governs the project" | staleness measured in the length of a CI run; no local loop at all |
-  | CLI one-shot (`standfast sync`) | nothing to operate; closest to what exists | relies on someone remembering |
-
-  These are not exclusive — the CLI one-shot is the primitive the hook and the
-  CI step would both call. The open question is which one is the default we
-  document and support.
-- **Where it lives** — its own package, or a mode of `packages/cli`. The same
-  open item as `docs/03-architecture.md`. A separate package is right if the
-  watcher ships and overhead if the answer is a CLI one-shot, so this question
-  resolves with the one above rather than before it.
-- **The debounce window and the bulk-absence fraction.** Both are numbers, and
-  neither has been measured. Inventing them here is the failure
-  `docs/02-principles.md` (10) describes.
+- **The bulk-absence fraction**, if `sync prune` is ever built — see
+  *Deletion*. A number nobody has measured, and inventing it here is the
+  failure `docs/02-principles.md` (10) describes.
 - **Whether `standfast doc push` survives the daemon.** `docs/14-roadmap.md` says
   the daemon demotes it to a convenience; `docs/08-mcp-server.md` says two
   write paths into one source are two ways for it to disagree. Keeping it as
@@ -474,17 +488,5 @@ Recorded so each question is asked once.
   daemon is the first client with an obvious reason for a narrow one: write
   documents, and nothing else. Whether scope enforcement lands with the daemon
   or earlier is undecided.
-- **Reading remote state cheaply.** The daemon needs `(path, content_hash)`
-  per document; `GET /v1/projects/{projectId}/documents` returns every
-  document in full, bodies included, unpaginated. That is fine at phase-0
-  scale, and it is the same gap `docs/03-architecture.md` already lists under
-  pagination. Whether the answer is pagination, a projection parameter, or a
-  dedicated manifest endpoint is open.
-- **Behaviour when the API is unreachable.** A one-shot run should fail
-  loudly; a watcher should retry with backoff. Since that answer is a function
-  of the trigger, it resolves with the trigger.
-- **The config file's name and shape** — `standfast.sync.json`, or a key inside a
-  broader `standfast.json` that later holds other project settings — and whether
-  one folder may serve more than one project.
 - **A size cap on an individual document.** A Markdown file can contain a
   base64 blob. Nothing today refuses one, and the body column is `text`.

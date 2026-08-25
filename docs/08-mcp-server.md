@@ -1,11 +1,12 @@
 <!-- docs/08-mcp-server.md -->
 # MCP server
 
-> **Status: the catalogue is settled. The implementations are phase-gated.**
-> The tool names, their modes and their response envelopes below are a public
-> contract and are implemented as each phase lands. A tool marked *phase 2* is
-> not to be stubbed out earlier — an agent that calls a tool returning nothing
-> learns not to call it again.
+> **Status: the catalogue is settled, and all six tools ship.** The tool names,
+> their modes and their response envelopes below are a public contract, and the
+> phase column now records when each one landed rather than when it is due.
+> The rule that got them here still holds for anything added later: a tool is
+> not to be stubbed out ahead of its phase — an agent that calls a tool
+> returning nothing learns not to call it again.
 
 ## Why this document exists before the code
 
@@ -118,14 +119,35 @@ still honors the decisions.
 
 The agent reads the code — locally, in its own session — and submits verdicts.
 
+- One call carries a whole check: `items`, plus a self-reported `trigger`
+  naming which loop produced it. One submission is one run, because a run that
+  arrived in pieces would have a denominator nobody can trust — and that
+  denominator is the kill metric's.
 - Input per item: `atom_id`, `verdict`, `file_path`, `line_start`, `line_end`,
   and an optional short rationale.
+- The verdict is one of four: `violated`, `honored`, `not_applicable`,
+  `unverifiable`. `violated` must cite the lines that disprove the atom, and the
+  schema refuses it otherwise. `honored` is a residual — what is recorded when
+  the search for a counter-example came back empty — and never a green tick.
+  There is no `partially_honored`: a vocabulary that offers a hedge gets one.
 - **No field accepts code.** Not truncated, not hashed, not "just a snippet".
   This is invariant 3 enforced at the wire, and the schema is where it is
-  enforced first (`docs/02-principles.md`, 2).
+  enforced first (`docs/02-principles.md`, 2). Both the HTTP request schema and
+  the tool's own item schema are strict, so an unlisted field is a refusal
+  rather than a field quietly dropped. Quietly dropped is the worse outcome of
+  the two, because it reads as acceptance and the agent goes on sending it —
+  which is exactly what the MCP SDK does by default, since it wraps a tool's
+  shape in a plain object schema that strips unknown keys. The strictness is
+  therefore written explicitly rather than inherited, and asserted by a test
+  that fails on the *message* and not merely on the call failing.
+- The rationale is the one free-text field on this path: one short line, capped,
+  and rejected if it carries a control character, so a pasted snippet cannot
+  fit. It is never served back to any agent. Whether a cap is sufficient at all
+  is still open in `docs/13-threat-model.md`.
 - Output is an acknowledgement and what it changed. The system flags and
   annotates; it does not fix code or open pull requests
-  (`docs/02-principles.md`, 6).
+  (`docs/02-principles.md`, 6). Only a human resolves a finding, and the
+  composite key on `actors (id, kind)` is what refuses an agent that tries.
 
 ### `status` — phase 0
 

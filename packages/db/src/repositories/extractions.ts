@@ -80,10 +80,11 @@ export async function claimExtraction(
   const existing = await db.execute<{
     id: string;
     status: "running" | "succeeded" | "failed";
+    sectionHash: string;
     expired: boolean;
     attempts: number;
   }>(sql`
-    select id, status, attempts,
+    select id, status, attempts, section_hash as "sectionHash",
            (lease_expires_at is null or lease_expires_at <= now()) as expired
       from section_extractions
      where section_id = ${input.sectionId}::uuid
@@ -93,15 +94,28 @@ export async function claimExtraction(
   const row = existing.rows[0];
   if (!row) return { kind: "gone" };
 
-  // The idempotency guarantee, and the reason a redelivered job is free.
-  if (row.status === "succeeded") return { kind: "already-succeeded" };
+  // The idempotency guarantee, and the reason a redelivered job is free — but
+  // only at the hash that succeeded. `reconcileSections` keeps an edited
+  // section's row and re-enqueues it, so "this section already succeeded at
+  // this version" is no longer proof there is nothing to do: succeeded at a
+  // *different* hash is finished work on text that no longer exists, and
+  // honouring it would skip the re-extraction forever.
+  if (row.status === "succeeded" && row.sectionHash === input.sectionHash) {
+    return { kind: "already-succeeded" };
+  }
 
   if (row.status === "running" && !row.expired) return { kind: "held" };
 
-  // Either a crashed worker's lease has expired, or the previous attempt
-  // failed. Both are retryable at the same version, and both reuse the row
-  // because the unique key leaves no alternative — which is why `attempts` is a
-  // counter rather than a row per try.
+  // A crashed worker's lease has expired, the previous attempt failed, or the
+  // run that succeeded was for a hash the section no longer has. All three are
+  // retryable at the same version, and all reuse the row because the unique
+  // key leaves no alternative — which is why `attempts` is a counter rather
+  // than a row per try.
+  //
+  // The hash comparison is racy by nature and that is accepted: an edit that
+  // lands while an extraction is in flight leaves a succeeded row at the old
+  // hash until the *next* write re-enqueues the section. That class predates
+  // this branch — the enqueue has always been the trigger, not a watcher.
   const taken = await db.execute<{ id: string; attempts: number }>(sql`
     update section_extractions
        set status = 'running',
@@ -117,7 +131,9 @@ export async function claimExtraction(
      where id = ${row.id}::uuid
        and (status = 'failed'
             or (status = 'running'
-                and (lease_expires_at is null or lease_expires_at <= now())))
+                and (lease_expires_at is null or lease_expires_at <= now()))
+            or (status = 'succeeded'
+                and section_hash is distinct from ${input.sectionHash}))
     returning id, attempts
   `);
 

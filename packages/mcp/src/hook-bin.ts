@@ -4,6 +4,7 @@
  *
  *   standfast-hook SessionStart
  *   standfast-hook UserPromptSubmit
+ *   standfast-hook PostToolUse
  *
  * Configured in a Claude Code settings file, for example:
  *
@@ -31,12 +32,21 @@
  * without the other gives an agent tools with no cold start, or a cold start
  * with no way to follow up.
  */
-import { createClient } from "@standfast/sdk";
+import { createClient, type StandfastClient } from "@standfast/sdk";
 import {
+  EDIT_TOOLS,
   type HookOutcome,
+  runPostToolUse,
   runSessionStart,
   runUserPromptSubmit,
 } from "./hooks.js";
+
+/** Emitted whenever there is nothing to say. Valid output, zero cost. */
+const SILENT: HookOutcome = {
+  additionalContext: null,
+  diagnostic: null,
+  tokens: 0,
+};
 
 /** Everything below is wrapped so that no path reaches a non-zero exit. */
 async function main(): Promise<void> {
@@ -54,18 +64,48 @@ async function main(): Promise<void> {
   if (!apiKey) {
     // Not configured is not a failure, and must not be noisy: a developer who
     // has not set Standfast up should not see a complaint on every session.
-    emit(event, { additionalContext: null, diagnostic: null, tokens: 0 });
+    emit(event, SILENT);
     return;
   }
 
   const client = createClient({ apiKey, baseUrl });
 
-  const outcome =
-    event === "UserPromptSubmit"
-      ? await runUserPromptSubmit(client, projectId, promptOf(payload))
-      : await runSessionStart(client, projectId);
+  // Explicit, and not a ternary with a default. The default used to be
+  // `runSessionStart`, which meant every event this build did not recognise
+  // pushed the whole project pack — so adding `PostToolUse` to a settings file
+  // would have injected the entire project after every single edit, at session
+  // start's budget, forever. An unknown event now does nothing at all.
+  const outcome = await run(event, client, projectId, payload);
 
   emit(event, outcome);
+}
+
+async function run(
+  event: string,
+  client: StandfastClient,
+  projectId: string | undefined,
+  payload: Record<string, unknown>,
+): Promise<HookOutcome> {
+  switch (event) {
+    case "SessionStart":
+      return runSessionStart(client, projectId);
+    case "UserPromptSubmit":
+      return runUserPromptSubmit(client, projectId, promptOf(payload));
+    case "PostToolUse":
+      // `PostToolUse` fires for every tool. Only an edit changes what the file
+      // says, and checking a file nobody wrote is budget spent to confirm the
+      // unchanged.
+      return EDIT_TOOLS.has(stringAt(payload, "tool_name"))
+        ? runPostToolUse(
+            client,
+            projectId,
+            filePathOf(payload),
+            stringAt(payload, "session_id"),
+          )
+        : SILENT;
+    default:
+      return SILENT;
+  }
 }
 
 /**
@@ -94,8 +134,28 @@ async function readPayload(): Promise<Record<string, unknown>> {
 }
 
 function promptOf(payload: Record<string, unknown>): string {
-  const prompt = payload["prompt"];
-  return typeof prompt === "string" ? prompt : "";
+  return stringAt(payload, "prompt");
+}
+
+function stringAt(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * The path the agent just edited.
+ *
+ * `undefined` rather than `""` when it is missing, because that is what
+ * {@link runPostToolUse} treats as "nothing to check" — a client that shapes
+ * `tool_input` differently, or a version that renames the field, gets silence
+ * rather than a check of the empty path.
+ */
+function filePathOf(payload: Record<string, unknown>): string | undefined {
+  const input = payload["tool_input"];
+  if (typeof input !== "object" || input === null) return undefined;
+
+  const filePath = (input as Record<string, unknown>)["file_path"];
+  return typeof filePath === "string" && filePath ? filePath : undefined;
 }
 
 /**

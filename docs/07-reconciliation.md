@@ -1,12 +1,21 @@
 <!-- docs/07-reconciliation.md -->
 # Reconciliation
 
-> **Status: designed, not implemented.** Phase 3 owns this and phase 3 has not
-> started. No table, no endpoint, no tool and no hook described below exists.
-> `docs/08-mcp-server.md` already fixes the shape of the `reconcile` tool and
-> `docs/14-roadmap.md` already fixes the exit criteria; this document decides
-> the loop, the verdict vocabulary and the schema underneath them. Everything
-> still genuinely undecided is under *Open*, not guessed at above it.
+> **Status: built, and unmeasured.** Phase 3 shipped the loop described here.
+> Migration `0009` creates `reconciliation_runs` and `reconciliation_findings`,
+> and both are named in `packages/db/src/schema/wire-allowlist.ts`. `reconcile`
+> is an MCP tool — the sixth and last `docs/08-mcp-server.md` names — a
+> `PostToolUse` hook fires after every `Edit` and `Write`, drift counts come
+> back through `status`, and `standfast findings ls` and `findings resolve`
+> put the reading and the resolving in front of a human, which is the only
+> actor either one accepts.
+> **No exit criterion is claimed.** `reconciliation_false_positive_rate` is the
+> kill metric and its `baseline` is `null` in `eval/baselines.json`, so
+> `pnpm eval reconciliation` reports SKIPPED and will keep reporting it until a
+> human labels a corpus. Built is not measured, and the 5% bar has never been
+> tested against anything. Everything still genuinely undecided is under
+> *Open*, including whether the rationale field should hold free text at all
+> (`docs/13-threat-model.md`).
 
 ## Why this is the moat
 

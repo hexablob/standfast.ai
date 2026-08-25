@@ -1,7 +1,26 @@
+import { getTableColumns } from "drizzle-orm";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  atomEvents,
+  atoms,
+  reconciliationFindings,
+  reconciliationRuns,
+} from "../schema/knowledge.js";
 import { TENANT_TABLES, WIRE_ALLOWLIST } from "../schema/wire-allowlist.js";
 import { adminClient } from "./harness.js";
+
+/**
+ * The tables this guard reflects over. Phase 3's two, plus `atoms` — which
+ * phase 3 altered, and which is the table a composite foreign key now points
+ * at.
+ */
+const SCHEMA_TABLES = {
+  atoms,
+  atom_events: atomEvents,
+  reconciliation_runs: reconciliationRuns,
+  reconciliation_findings: reconciliationFindings,
+};
 
 let admin: Client;
 
@@ -87,4 +106,46 @@ describe("pgvector is available on this host", () => {
     );
     expect(r.rows.map((x) => x.extname).sort()).toEqual(["pg_trgm", "vector"]);
   });
+});
+
+/**
+ * The Drizzle model and the hand-written DDL, compared against the same live
+ * database.
+ *
+ * `WIRE_ALLOWLIST` above is compared to `information_schema`, and that catches a
+ * column added to a migration and forgotten in the allowlist. It does not catch
+ * the other omission: a column added to a migration *and* to the allowlist but
+ * forgotten in `packages/db/src/schema/knowledge.ts`. Nothing would fail —
+ * queries never select what the model does not declare — and the model would
+ * drift from the table silently, for as long as nobody wrote to the column.
+ *
+ * That gap is load-bearing here because migrations 0007, 0008 and 0009 are
+ * hand-written: drizzle-kit's snapshot chain stops at 0006, so `db:generate`
+ * diffs against a stale picture and cannot be the thing that keeps these two in
+ * step. This is.
+ */
+describe("the Drizzle model matches the tables it claims to describe", () => {
+  it.each(Object.keys(SCHEMA_TABLES))(
+    "%s declares exactly the columns the database has",
+    async (table) => {
+      const declared = Object.values(
+        getTableColumns(SCHEMA_TABLES[table as keyof typeof SCHEMA_TABLES]),
+      )
+        .map((column) => column.name)
+        .sort();
+
+      const actual = await admin.query<{ column_name: string }>(
+        `select column_name from information_schema.columns
+          where table_schema = 'public' and table_name = $1
+          order by column_name`,
+        [table],
+      );
+
+      // Equality, not containment — the same argument the wire allowlist makes.
+      // A column the database has and the model does not is the drift this
+      // exists to catch, and a column the model has and the database does not
+      // is a migration nobody applied.
+      expect(declared).toEqual(actual.rows.map((r) => r.column_name));
+    },
+  );
 });

@@ -1,15 +1,21 @@
 <!-- docs/14-roadmap.md -->
 # Roadmap
 
-> **Status: phase 0 complete, phases 1 and 2 under way.** Every phase-0 exit
-> criterion below is checked in CI today. Phase 1 has shipped its schema, its
-> evaluation harness, its pipeline and its adapters. Phase 2 has shipped its
-> machinery — indexes, the four generators, fusion, assembly, `context` and
-> `search` — and **cannot exit on it**, because both phases now wait on the
-> same thing: a labelled corpus, written blind by a human, that does not exist.
-> Phases 3 to 5 are decided as scope and as ordering; no code exists for any of
-> them. The phase numbers are a contract — `CLAUDE.md` and
-> `docs/00-handoff.md` cite them — so they are not renumbered, ever.
+> **Status: phases 0 to 3 are built; phase 0 is the only one that has exited.**
+> Every phase-0 exit criterion below is checked in CI today. Phase 1 has shipped
+> its schema, its evaluation harness, its pipeline and its adapters. Phase 2 has
+> shipped its machinery — indexes, the four generators, fusion, assembly,
+> `context` and `search`. Phase 3 has shipped migration `0009`, the findings
+> tables, the `reconcile` tool — the sixth and last the specification names —
+> the `PostToolUse` hook, drift counts through `status` and the CLI `findings`
+> commands; migration `0010` then closed org-consistency across the whole schema
+> with composite foreign keys. None of the three **can exit on that**, because
+> all three wait on the same thing: a labelled corpus, written blind by a human,
+> that does not exist. Phases 4 and 5 are decided as scope and as ordering and
+> neither has started; what exists of phase 4 is vocabulary rather than
+> behaviour, in migrations `0011` and `0012`, and nothing writes either yet. The
+> phase numbers are a contract — `CLAUDE.md` and `docs/00-handoff.md` cite them
+> — so they are not renumbered, ever.
 >
 > **Machinery is not a phase.** Recording that distinction here because it is
 > the one this document exists to enforce: a phase exits on a number somebody
@@ -377,12 +383,47 @@ atom and the lines. An edit that does not, produces nothing.
 
 **Exit criterion.**
 
+Criterion 2 is asserted. Criteria 1 and 3 are not, and both wait on the same
+thing: a corpus that does not exist and labels no model may write.
+
 1. **Reconciliation false-positive rate below 5% on the labelled corpus.**
-   This is the kill metric; see below.
+   This is the kill metric; see below. **Not met, and not measured.**
+   `pnpm eval reconciliation` exists and always reports `SKIPPED` with its
+   reason, and `reconciliation_false_positive_rate` keeps `baseline: null` in
+   `eval/baselines.json`. The bar is the one number this document already owns —
+   5%, and a hard threshold — so the first figure it ever prints is one the
+   product can be killed by, and a figure produced without a human labeller
+   would measure how hard somebody tried.
 2. No field of `reconcile` accepts source code — asserted by a schema test,
    and by the wire allowlist equality test over the findings table.
+   **Asserted** in three places rather than one, because the claim is about a
+   boundary and a boundary has sides: `packages/api/src/reconcile-schema.test.ts`
+   pins the accepted field set by equality and sweeps sixteen names somebody
+   would reach for to smuggle a snippet, every one refused by `.strict()` rather
+   than silently dropped; `packages/db/src/testing/schema-guards.integration.test.ts`
+   compares the wire allowlist against `information_schema` for both new tables;
+   and `packages/api/src/mcp.integration.test.ts` calls the tool itself with an
+   extra field and watches it fail *with a message naming the field*, because an
+   earlier version of that test passed for a reason unrelated to the guard and
+   would have gone on passing after the guard was removed. The response schema
+   is asserted not to carry the rationale back out, which is the other direction
+   of the same invariant — and `filePath`, which is the field that *is* served
+   back, carries the same character rule as the rationale, so a path cannot
+   become the free-text field the rationale is not allowed to be.
 3. The corpus and the labelling procedure are committed, so the 5% can be
-   recomputed by someone who did not run it the first time.
+   recomputed by someone who did not run it the first time. **Not met.** Two
+   questions have to be answered before the number means anything and neither
+   is a coding task: the minimum finding count below which the rate is not
+   reportable, and whether the corpus is labelled per model or the criterion
+   names a reference model — the check runs in the customer's session, so the
+   rate is model-dependent and a figure measured on one model does not transfer.
+
+**What shipped without its number.** The loop is built: the sixth and last MCP
+tool, the two tables with the falsification constraint and the queue
+biconditional in the schema, the `PostToolUse` hook, drift through `status`, and
+the human's two commands. None of that is evidence that it works. A reconciler
+that fires reliably and is wrong 20% of the time passes every test in this
+repository and fails the product, which is exactly what criterion 1 is for.
 
 ## Phase 4 — distribution and the ratification loop
 
@@ -402,9 +443,9 @@ any credential in the org, and `docs/10-sync-daemon.md` designs for that rather
 than pretending otherwise — a daemon that assumed exclusivity would corrupt
 data the first time someone used the CLI it ships alongside. Git export to a
 repository the customer controls, beyond
-the one-shot directory dump the CLI does today. The ratification surface: the
-queue a human works through, with provenance shown and imperative or
-meta-instruction patterns flagged (`docs/02-principles.md`, 13). Packaging as
+the one-shot directory dump the CLI does today. The ratification surface, which
+is the CLI: the queue a human works through, with provenance shown and
+imperative or meta-instruction patterns flagged (`docs/02-principles.md`, 13). Packaging as
 a Claude Code plugin bundling the MCP server and the hooks, and as a plain MCP
 server everywhere else. Publication to the MCP registries. A release supply
 chain that is pinned, signed and attested, with nothing resolving "latest" at
@@ -419,14 +460,38 @@ queue does not grow without bound.
 
 **Exit criterion.**
 
+None of the three is met. Criterion 2's *machinery* exists, which is not the
+same thing and is worth keeping apart.
+
 1. A scripted end-to-end from a clean machine, run in CI: install, sync a
-   folder, open a session, receive a context pack, ratify an atom.
+   folder, open a session, receive a context pack, ratify an atom. **Not met.**
+   Four of the five steps are reachable: `standfast queue`, `next`, `ratify`,
+   `reject`, `retire` and `ratification` exist, and a session already receives a
+   context pack. Syncing a folder has nothing at all, because the daemon does not
+   exist — and nothing runs the sequence end to end from a clean machine, which
+   is the part the criterion is actually about.
 2. Ratification throughput computed from `atom_events` — median time from
    `proposed` to a decision, and the share of provisional atoms older than a
    chosen age. The table has existed since migration `0000` precisely so this
    is not a metric that had to be started from zero. The bar is not yet
    chosen — see *Open*.
-3. A release job that fails on an unsigned or unattested artifact.
+
+   **Computable, and uncomputed.** `ratificationThroughput` in
+   `packages/db/src/repositories/ratification.ts` returns the median — a real
+   `percentile_cont(0.5)`, because one atom that sat for three months drags a
+   mean and says nothing about the typical review — and `null` rather than zero
+   when nothing has been decided, since zero would read as instant review. The
+   age threshold is a **required argument with no default**, at the repository,
+   the route and the CLI alike: the bar is unchosen, and a default anywhere on
+   that path would quietly become it. What is missing is a human choosing the
+   number, not code.
+3. A release job that fails on an unsigned or unattested artifact. **Not met.**
+
+**And the rejection reason is why criterion 2 could be honest at all.** Phase 4
+added a reject route because clearance counted half a reviewer's work without
+one: a queue drains by two decisions and only one was routed, so a throughput
+metric built before it would have measured half the job and looked fine doing
+it.
 
 ## Phase 5 — teams
 
@@ -685,18 +750,6 @@ deadline is a question nobody answers.
   test in phase 2.
 - **Whether a length cap is sufficient protection for the `reconcile`
   rationale field**, or whether free text has no place on that path at all.
-- **Where the ratification surface lives** — CLI, web dashboard, or inside the
-  editor. Principle 5 fixes that its throughput is a metric, not what it looks
-  like. The behaviour, as opposed to the venue, is no longer open:
-  `docs/15-ratification.md` settles it, and phase 4 cannot ship without it.
-- **Nothing retires a canonical atom without a successor.** `superseded`
-  requires one by definition and `rejected` is reachable only from
-  `provisional` (`docs/04-data-model.md`, *Atom lifecycle*), yet
-  `docs/05-extraction.md` says an atom the new extractor no longer produces is
-  flagged for human review — so the phase 4 queue will hold an item for which
-  no decision exists. Either a `canonical → rejected` transition for a human
-  actor, or a fifth status. Both are a migration and a change to the status
-  vocabulary, so **this roadmap owns it, closing before phase 4 ships**.
 - **Whether the sync daemon should arrive before phase 4.** It is the intended
   write path for documents (`docs/08-mcp-server.md`) and `doc push` is the
   stand-in. Nothing blocks on it, which is the only reason it is where it is.

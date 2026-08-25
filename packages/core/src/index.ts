@@ -1,4 +1,12 @@
 export {
+  ATOM_EVENTS,
+  ATOM_REJECT_REASONS,
+  ATOM_STATUSES,
+  type AtomEvent,
+  type AtomRejectReason,
+  type AtomStatus,
+} from "./atom.js";
+export {
   admitEgress,
   assertEgressAllowed,
   describeEgress,
@@ -38,6 +46,19 @@ export {
   trigramQuery,
 } from "./query.js";
 export { locateQuote, quoteAt, type Span } from "./quote.js";
+export {
+  FILE_PATH_MAX_CHARS,
+  FINDING_STATUSES,
+  FINDING_VERDICTS,
+  type FindingStatus,
+  type FindingVerdict,
+  isSubmittableFilePath,
+  isSubmittableRationale,
+  RATIONALE_MAX_CHARS,
+  RECONCILIATION_TRIGGERS,
+  type ReconciliationTrigger,
+  statusForVerdict,
+} from "./reconcile.js";
 export { type FusedAtom, type RankedList, RRF_K, rrfFuse } from "./rrf.js";
 export {
   type Band,

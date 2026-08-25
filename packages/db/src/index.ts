@@ -40,6 +40,8 @@ export * from "./repositories/documents.js";
 export * from "./repositories/egress.js";
 export * from "./repositories/extractions.js";
 export * from "./repositories/projects.js";
+export * from "./repositories/ratification.js";
+export * from "./repositories/reconciliation.js";
 export * from "./repositories/retrieval.js";
 export * as schema from "./schema/index.js";
 export { TENANT_TABLES, WIRE_ALLOWLIST } from "./schema/wire-allowlist.js";

@@ -141,17 +141,24 @@ async function snapshot() {
 
 describe("criterion 1 — every stored quote verifies", () => {
   it("returns zero atoms whose quote is not the text its span names", async () => {
-    // Run as the admin, deliberately: RLS would scope this to one org and the
-    // criterion is over the whole database. Zero, not low — there is no
-    // acceptable rate of atoms citing text that is not there.
+    // Run as the admin, deliberately: RLS would otherwise hide rows from the
+    // check. Scoped to this suite's project rather than the whole database,
+    // because a document edit can now legitimately leave a *stale citation* —
+    // an atom whose quote vanished from its rewritten section, reported in
+    // `staleCitations` and deliberately left untouched (docs/09) — and other
+    // suites plant exactly that state on purpose. Within what extraction
+    // wrote here: zero, not low — there is no acceptable rate of extraction
+    // citing text that is not there.
     const r = await admin.query(
       `select a.id
          from atoms a
          join document_sections s on s.id = a.section_id
-        where substring(s.body
+        where a.project_id = $1
+          and substring(s.body
                         from lower(a.source_span) + 1
                         for  upper(a.source_span) - lower(a.source_span))
               is distinct from a.source_quote`,
+      [projectId],
     );
     expect(r.rows).toEqual([]);
   });

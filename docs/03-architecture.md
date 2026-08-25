@@ -1,12 +1,13 @@
 <!-- docs/03-architecture.md -->
 # Architecture
 
-> **Status: settled.** The package boundary, the licence split, the dependency
-> direction, the trust boundary and the request lifecycle below are implemented
-> in phase 0 and in force today. Two things are named but not built:
-> `packages/worker` is an entrypoint with nothing behind it, and pg-boss is a
-> declared dependency with no import. Every such statement is marked where it
-> appears.
+> **Status: settled, and now built.** The package boundary, the licence split,
+> the dependency direction, the trust boundary and the request lifecycle below
+> are in force today. The two gaps this banner used to name are closed:
+> `packages/worker` has the pipeline behind it, with real adapters in
+> `src/adapters/`, and pg-boss is imported and running on the schema migration
+> `0005` creates. Where a statement below is still design rather than code it
+> is marked where it appears.
 
 ## What this document fixes
 
@@ -38,9 +39,10 @@ Everything else in this document follows from those three.
 `core` has no runtime dependencies at all, which is what makes
 `CLAUDE.md`'s "testable without a database" a property rather than an
 aspiration: there is nothing in it to stub. `sectionMarkdown`, `contentHash`
-and `sectionHash` are functions of their arguments. When phase 1 adds
-extraction, the parts of it that are decisions rather than calls belong here
-for the same reason.
+and `sectionHash` are functions of their arguments, and the parts of
+extraction, retrieval and reconciliation that are decisions rather than calls
+sit beside them for the same reason — `quote.ts`, `rrf.ts`, `mmr.ts`,
+`pack.ts`, `reconcile.ts`.
 
 `sdk` has exactly one runtime dependency (`openapi-fetch`) and `cli` has
 exactly one (`sdk`). The CLI parses arguments with `node:util`'s `parseArgs`
@@ -287,10 +289,9 @@ Migrations still run as the owner. Only the API needs the restricted role.
 
 ## Jobs
 
-**Not implemented.** pg-boss is a declared dependency of `db` and `worker`;
-nothing imports it, and `packages/worker/src/index.ts` is an empty entrypoint.
-The design below is settled in `CLAUDE.md` and recorded here so the first
-implementation does not have to rediscover it.
+**Implemented in phase 1c.** pg-boss runs on the schema migration `0005`
+creates, and `packages/worker/src/index.ts` is the consumer entrypoint for the
+extraction pipeline. The design below is what it implements.
 
 Jobs live in Postgres, and **enqueue is transactional**: the job row is
 inserted in the same transaction as the row that justifies it. There is no
@@ -307,8 +308,8 @@ smaller.
 
 ### Why the read path has no generative model call
 
-Everything expensive is on the worker side of the queue: extraction (phase 1),
-atom embedding (phase 1), and the LLM adjudication used only in the
+Everything expensive is on the worker side of the queue: extraction,
+atom embedding, and the LLM adjudication used only in the
 intermediate deduplication band (`docs/00-handoff.md`). None of it sits between
 an agent's question and its answer.
 

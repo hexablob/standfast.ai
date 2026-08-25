@@ -7,7 +7,8 @@
 > `SessionStart` and `UserPromptSubmit` hooks exist
 > (`packages/mcp/src/hooks.ts`) — so the push channel this document governs is
 > real, the injection is labelled as injected, and the fail-open behaviour is
-> asserted rather than described. `reconcile` remains phase 3.
+> asserted rather than described. `reconcile` ships too, with a third hook,
+> `PostToolUse`, firing after every `Edit` and `Write`.
 >
 > **What has still never run is most of the failure table below.** The
 > unreachable and malformed-response rows are tested; the key, project and
@@ -70,11 +71,10 @@ is deliberate — a knowledge layer that hides knowledge from the reader it was
 built for has no reason to exist.
 
 Every atom comes back with `source_quote` and the `document_id` / `section_id`
-it was drawn from, always. `source_span` is accepted on write and stored, but
-`AtomSchema` in `packages/api/src/schemas.ts` does not return it — so an agent
-can locate the citing section but not the exact offsets inside it, and must
-match the quote itself. Putting the span on the response is a phase-1 change
-that arrives with quote verification. `docs/08-mcp-server.md`
+it was drawn from, always. `source_span` comes back too — `AtomSchema` in
+`packages/api/src/schemas.ts` returns it, in Unicode code points — so a client
+can highlight the quote where it actually sits rather than searching for a
+sentence a section may say twice. `docs/08-mcp-server.md`
 fixes the rest on `read`, and it is the reason `/v1/sections/{sectionId}` exists as
 its own endpoint: verifying an atom's provenance must not require fetching a
 whole document and searching it. An atom without visible provenance is an
@@ -90,7 +90,7 @@ that produces the most useful failure:
 | tool schema | a call with no `sourceQuote` or `sourceSpan` | `packages/mcp/src/tools.ts` |
 | request schema | a `status` field — there isn't one | `CreateAtomSchema` |
 | database | null `document_id` / `section_id`, blank quote | `0000_foundation.sql` |
-| phase 1 | a quote that is not verbatim at that span | not built |
+| database trigger | a quote that is not verbatim at that span | `0002_extraction_invariants.sql` |
 
 The ordering is the point. The database is the guarantee; the tool schema is
 there so the agent gets a sentence instead of a constraint violation. Both stay.
@@ -223,12 +223,12 @@ than left to be discovered.
 
 | Promise | Mechanism | State |
 | --- | --- | --- |
-| Determinism on the read path | no *generative* model call between question and answer; the query embedding and reranker are pinned and bounded (`docs/06-retrieval.md`) | phase 2 |
-| The budget is respected, not approximated | `budget_tokens`; phase 2 exit criterion 1 | phase 2 |
+| Determinism on the read path | no *generative* model call between question and answer; the query embedding and reranker are pinned and bounded (`docs/06-retrieval.md`) | implemented |
+| The budget is respected, not approximated | `budget_tokens`, enforced in `packages/core/src/pack.ts`; phase 2 exit criterion 1 | implemented, unmeasured |
 | Truncation is stated, never inferred | `truncated`, set by the generator | implemented |
-| Provenance travels with everything | quote, document and section; the span is stored but not yet returned | partial |
+| Provenance travels with everything | quote, document, section and span, on every atom returned | implemented |
 | Status is never dressed up | `atoms.status` on every read | implemented |
-| It never gates the work | fail open, always | phase 2 |
+| It never gates the work | fail open, always | implemented |
 
 ### Determinism
 
@@ -237,8 +237,10 @@ promise to the agent and not only an engineering preference: an agent that gets
 two different answers to one question cannot distinguish our ranking changing
 from its own memory drifting, and neither can whoever reads its bug report.
 
-Today's read path has no model on it because there is no retrieval on it at
-all. The tension that will test this promise is the cross-encoder reranker,
+Today's read path has one model call on it — the query embedding, pinned and
+bounded (`packages/core/src/query.ts`, then assembly in
+`packages/core/src/pack.ts`) — and nothing generative. The tension that will
+test this promise is the cross-encoder reranker,
 named in `docs/03-architecture.md` and turned into an acceptance test in
 `docs/14-roadmap.md`: determinism and a bounded, measured p95, or the reranker
 does not go on the read path. This document takes that as settled and does not
@@ -354,7 +356,7 @@ load-bearing rather than procedural.
 | Key missing, revoked or expired | `401 Invalid API key.` | stop calling; escalate to the human |
 | Project not found | `404 Not found, or belongs to another org` | ask which project; never create one |
 | Result truncated | `truncated: true` | narrow the question; report the view as partial |
-| Citation no longer holds | phase 1 concern — see below | do not treat it as canonical |
+| Citation no longer holds | cannot arise yet — see below | do not treat it as canonical |
 
 ### Unreachable
 
@@ -390,22 +392,28 @@ somebody else's org. And it may not enumerate in order to find out.
 
 ### An atom cites text that has since changed
 
-The interesting one, and today's answer is unsatisfying enough to be worth
-stating plainly rather than designing around.
+**It can happen now, and it is recorded rather than acted on.** `putDocument`
+matches the new body's sections against the stored ones in two passes:
+`section_hash` first, then `(ordinal, heading_path)` for the remainder
+(`docs/10-sync-daemon.md`), so an edited section keeps its row and its atoms
+— the promise above, a proposal survives until a human rules on it, now
+holds through an edit. After the rewrite, each surviving atom's
+`source_quote` is checked against the new body. Still present, and the
+`source_span` is re-anchored to its first occurrence. Gone, and the atom is
+left exactly as it was — status, quote and span included — with its id
+reported in `staleCitations` on the internal `putDocument` result. The HTTP
+route drops that field deliberately: nothing on the wire names it, because
+it is a surface for ratification tooling, not for the pushing client.
 
-**In phase 0 it cannot happen, for a reason nobody would choose.**
-`putDocument` deletes every row in `document_sections` for the document and
-re-derives them from the new body; `atoms.section_id` references those rows
-`on delete cascade`. So editing a document destroys the atoms projected from
-it. There is no stale citation because there is no atom.
-
-That is tolerable while atoms are hand-posted test data and no extraction
-exists. It is not tolerable from phase 1, because it breaks a promise this
-document makes — a proposal survives until a human rules on it. `section_hash`
-exists precisely so that a document edit re-extracts only the sections whose
-hash moved (`docs/04-data-model.md`), and phase 1 has to make the write path
-match that intent. Recorded here as this contract's requirement on phase 1;
-`docs/05-extraction.md` owns the mechanism.
+A stale citation is therefore representable, and it is deliberately mute in
+the schema: no `atom_status` value says *"the prose this was extracted from
+changed underneath it"*, and that vocabulary is phase 1's to add. Until it
+rules, deciding that a decision no longer holds stays a ratification-shaped
+act only a human performs. The loss that remains is narrow and pinned by
+test: a section edited *and* moved in one push misses both passes, its row
+is deleted, and `atoms.section_id`, which references it
+`on delete cascade`, takes the atoms with it — by design, because a looser
+match could marry the wrong rows.
 
 What the agent should do once a stale citation is representable is genuinely
 undecided. See *Open*.
@@ -497,8 +505,9 @@ Recorded so the question is asked once.
   nothing. The concrete question is whether the document write endpoints should
   require a scope an agent key never holds; it becomes urgent when agent keys
   are issued separately from human ones.
-- **What the agent does with an atom whose quote no longer verifies**, once
-  phase 1 makes that state representable. The defensible-sounding answer — do
+- **What the agent does with an atom whose quote no longer verifies**, which
+  is still not a representable state: an edited section is deleted and its
+  atoms cascade away rather than going stale. The defensible-sounding answer — do
   not serve it as canonical, and let the agent propose a supersede if it can
   cite the new text — is a decision about status transitions that belongs to
   `docs/05-extraction.md` and `docs/07-reconciliation.md`. Guessing it here
