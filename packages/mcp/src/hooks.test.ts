@@ -422,7 +422,14 @@ describe("runPostToolUse", () => {
     const outcome = await runPostToolUse(
       client,
       PROJECT,
-      EDIT_TOOLS.has("Bash") ? FILE : undefined,
+      // Deliberately the literal, not `EDIT_TOOLS.has("Bash") ? FILE : …`:
+      // deriving the input from the set under test would make this agree with
+      // itself. The membership assertions above are what pin the set.
+      //
+      // What is still not covered here: that `hook-bin.ts` consults EDIT_TOOLS
+      // at all (hook-bin.ts:98). It exports nothing and runs on import, so
+      // reaching that line would mean refactoring a bin for one expression.
+      undefined,
       freshSession(),
     );
 

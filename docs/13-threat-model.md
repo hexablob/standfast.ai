@@ -481,8 +481,15 @@ serialises: several allowlisted tables — `api_keys`, `atom_suppressions`,
 withheld by `AtomSchema`. **Listing is the review record, not the permission.**
 The guarantee is completeness, not disclosure: every table in the live schema
 must be classified as tenant data or not, and
-`packages/db/src/testing/schema-guards.integration.test.ts` reads
-`information_schema.columns` and fails, naming the table, when one is neither.
+`packages/db/src/testing/schema-guards.integration.test.ts` reads `pg_class` for
+every relation `public` holds and fails, naming the relation, when one is
+neither. `pg_class` and not `information_schema`, because the information schema
+is the SQL standard's view of the catalogue and a materialized view is not in
+the standard — one selecting `documents.body` appears in neither
+`information_schema.tables` nor `information_schema.columns`, and would hold a
+physical copy of every body it selected while the guard saw nothing. The same
+test refuses a view, a materialized view or a foreign table in `public`
+outright, since each serves columns that are reviewed one table at a time.
 Within a classified table it asserts **equality**, not containment, so adding a
 column fails the build until someone adds it to the allowlist too, in a diff a
 reviewer sees, with a commit message that has to justify it. The count of

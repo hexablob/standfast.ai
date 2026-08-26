@@ -73,6 +73,15 @@ type Stage =
   | "judge"
   | "write";
 
+/**
+ * Thrown only to roll the write transaction back when the fence rejects it.
+ *
+ * Never reaches a caller: the atoms and the terminal stamp share one
+ * transaction, so aborting is how the atoms this worker no longer has the right
+ * to write are discarded along with the stamp it was refused.
+ */
+class ClaimLost extends Error {}
+
 function errorText(stage: Stage, error: unknown): string {
   const message =
     error instanceof Error ? error.message : String(error ?? "unknown");
@@ -131,8 +140,29 @@ export function makeSectionExtractHandler(
     if (!claim.section || !claim.outcome) return SKIPPED("section is gone");
     if (claim.outcome.kind !== "claimed") return SKIPPED(claim.outcome.kind);
 
-    const claimId = claim.outcome.id;
+    // `attempts` is the fence every terminal write below carries. Captured here
+    // because this is the only moment it is true: from now on the value in the
+    // row is whatever the last claimant left, and a run that reread it would be
+    // asking the successor for permission to overwrite the successor.
+    const { id: claimId, attempts } = claim.outcome;
     const section = claim.section;
+
+    /**
+     * A successor took this run over while a model call was open.
+     *
+     * Not an error, and not an extraction: the section was re-hashed under this
+     * worker, so its candidates describe text that may no longer be there, and
+     * the successor is extracting the text that is. Said out loud because the
+     * discarded run cost a model call — a worker that reports this repeatedly
+     * has a lease shorter than its provider's tail latency, and nothing else in
+     * the system would ever say so.
+     */
+    const claimLost = (): HandlerOutcome => {
+      console.error(
+        `section.extract: section ${section.id} was taken over mid-run at attempt ${attempts}; this worker's result is discarded`,
+      );
+      return SKIPPED("claim lost");
+    };
 
     /**
      * Writes what is about to leave, before it leaves.
@@ -201,14 +231,18 @@ export function makeSectionExtractHandler(
       const dropped = located.length - survivors.length;
 
       if (survivors.length === 0) {
-        await actor((db) =>
+        // Nothing was written, so there is nothing to roll back — the stamp is
+        // the whole of this transaction, and losing it is simply the end.
+        const stamped = await actor((db) =>
           succeedExtraction(db, {
             id: claimId,
+            attempts,
             candidatesTotal: candidates.length,
             candidatesDropped: dropped,
             candidatesTruncated: truncated,
           }),
         );
+        if (stamped === "claim-lost") return claimLost();
         return {
           status: "extracted",
           candidatesTotal: candidates.length,
@@ -408,14 +442,20 @@ export function makeSectionExtractHandler(
             }
           }
 
-          await succeedExtraction(db, {
+          // Last, and inside the same transaction as the atoms above, which is
+          // what makes the fence a rollback rather than a repair: a run that no
+          // longer owns the claim takes its atoms down with its stamp.
+          const stamped = await succeedExtraction(db, {
             id: claimId,
+            attempts,
             candidatesTotal: candidates.length,
             candidatesDropped: dropped,
             candidatesTruncated: truncated,
           });
+          if (stamped === "claim-lost") throw new ClaimLost();
         });
       } catch (error) {
+        if (error instanceof ClaimLost) return claimLost();
         throw new Error(errorText("write", error));
       }
 
@@ -434,14 +474,23 @@ export function makeSectionExtractHandler(
         failExtraction(
           db,
           claimId,
+          attempts,
           error instanceof Error && /^[a-z]+: /.test(error.message)
             ? error.message.slice(0, 2000)
             : errorText("write", error),
         ),
-      ).catch(() => {
-        // Recording the failure failed too. Nothing further to do here; the row
-        // keeps its expired lease and the next worker takes it over.
-      });
+      )
+        .then((stamped) => {
+          // The failure belongs to this run, and this run is no longer the one
+          // the row describes. Announced and dropped: `failed` is what the
+          // takeover condition looks for, so writing it onto a successor's live
+          // claim would invite a third worker onto the same section.
+          if (stamped === "claim-lost") claimLost();
+        })
+        .catch(() => {
+          // Recording the failure failed too. Nothing further to do here; the
+          // row keeps its expired lease and the next worker takes it over.
+        });
       throw error;
     }
   };

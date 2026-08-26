@@ -18,9 +18,11 @@ describe("the shipped corpus", () => {
   });
 
   it("has no label errors", () => {
-    const errors = checkLabels(corpus, loadLabels(ROOT)).filter(
-      (p) => p.level === "error",
-    );
+    const loaded = loadLabels(ROOT);
+    const errors = [
+      ...loaded.problems,
+      ...checkLabels(corpus, loaded.values),
+    ].filter((p) => p.level === "error");
 
     expect(errors).toEqual([]);
   });

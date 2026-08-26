@@ -1,4 +1,4 @@
-import type { LabelSet } from "./labels.js";
+import { expectations, type LabelSet } from "./labels.js";
 
 /**
  * What two labellers agreed on, over the sections both of them labelled.
@@ -14,8 +14,22 @@ import type { LabelSet } from "./labels.js";
 export type Agreement = {
   pair: [string, string];
   document: string;
-  /** Sections both labellers wrote an entry for. */
+  /**
+   * Sections **both labellers decided about**.
+   *
+   * Listing a section is not deciding about it: a skeleton lists every section
+   * of the document before anyone has read one. Two untouched skeletons for the
+   * same document share every section and agree on all of them, which would
+   * report perfect agreement over a corpus nobody has touched. Only a section
+   * both sides have taken out of `UNREAD` counts here.
+   */
   overlap: number;
+  /**
+   * Sections both files list where at least one side is still unread. Reported
+   * so that a small overlap reads as "not labelled yet" rather than as
+   * disagreement.
+   */
+  unread: number;
   /** Both said the section yields atoms, or both said it yields none. */
   emptiness: { agreed: number; of: number };
   /** Both wrote the same number of expected atoms. */
@@ -49,6 +63,7 @@ export function agreementBetween(
   const leftQuotes = new Set<string>();
   const rightQuotes = new Set<string>();
   let overlap = 0;
+  let unread = 0;
   let emptinessAgreed = 0;
   let countAgreed = 0;
 
@@ -57,17 +72,25 @@ export function agreementBetween(
     if (!other) {
       continue;
     }
+    const mine = expectations(section);
+    const theirs = expectations(other);
+    if (mine === null || theirs === null) {
+      // One of them has not read this section. There is no opinion to agree
+      // with, and counting it would let untouched skeletons agree perfectly.
+      unread += 1;
+      continue;
+    }
     overlap += 1;
-    if ((section.expect.length === 0) === (other.expect.length === 0)) {
+    if ((mine.length === 0) === (theirs.length === 0)) {
       emptinessAgreed += 1;
     }
-    if (section.expect.length === other.expect.length) {
+    if (mine.length === theirs.length) {
       countAgreed += 1;
     }
-    for (const atom of section.expect) {
+    for (const atom of mine) {
       leftQuotes.add(atom.quote);
     }
-    for (const atom of other.expect) {
+    for (const atom of theirs) {
       rightQuotes.add(atom.quote);
     }
   }
@@ -80,6 +103,7 @@ export function agreementBetween(
     pair: [left.labeller, right.labeller],
     document: left.document,
     overlap,
+    unread,
     emptiness: { agreed: emptinessAgreed, of: overlap },
     count: { agreed: countAgreed, of: overlap },
     quoteJaccard: jaccard(leftQuotes, rightQuotes),

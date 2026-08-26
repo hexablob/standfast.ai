@@ -657,7 +657,8 @@ one input that can change with no diff on our side.
 
 JSON, one file per (document, labeller), at
 `labels/<document id>.<labeller>.json`. `pnpm eval skeleton <document>
-<labeller>` writes a blank one with every section listed and nothing expected.
+<labeller>` writes a blank one with every section listed and every `expect` set
+to the string **`"unread"`**.
 
 Each entry is keyed by **`sectionHash`**, which is what makes labels survive a
 document being reordered: `sectionHash` covers the heading path and the body
@@ -666,10 +667,55 @@ atom carries a statement, a `kind`, and a verbatim `quote` from the section
 body — checked on every run, for the same reason the database checks it on
 write.
 
-An empty `expect` is a label: it says the section states no decision,
-convention or constraint. A section with **no entry at all** is unlabelled.
-Collapsing the two would make recall unmeasurable, because a missed atom and a
-section nobody read would count identically.
+`expect` therefore has three states, and the distinction between the last two
+is what recall is measured against:
+
+| `expect` | Means | Counts |
+| --- | --- | --- |
+| `"unread"` | nobody has read this section | nothing |
+| `[]` | this section states no decision, convention or constraint | a label |
+| a list of atoms | this section states these | a label |
+
+An empty list is a judgement and is counted as one. `"unread"` is silence and is
+counted as nothing. Collapsing the two would make recall unmeasurable, because a
+missed atom and a section nobody read would count identically.
+
+The marker exists because the distinction has to be **structural, not
+remembered**. A skeleton that listed every section with an empty `expect` was a
+file asserting, of a document nobody had opened, that not one section of it
+states anything — and the instruction that made it safe was "delete the entries
+you have not reached", a correctness-critical duty discharged from memory a few
+hundred times. It failed silently in both directions a labeller has to judge
+readiness by: coverage counted entries, so a fresh skeleton read as complete and
+*fell* as the work was done; and two fresh skeletons for the same document
+agreed with each other on every section, so agreement read as perfect between
+two people who had each done nothing. Silence now has a spelling of its own,
+`[]` cannot be arrived at by inaction, and neither figure can be reached without
+someone typing over a marker.
+
+What the instrument does with it:
+
+- **`check`** counts a section as labelled only when `expect` is a list, and
+  reports the outstanding `"unread"` count beside every coverage figure. A fresh
+  skeleton reads as `0/56 (0%)  56 unread`.
+- **Agreement** ignores a section either labeller has not read, and says how many
+  it ignored, so a thin overlap reads as unfinished rather than as disagreement.
+- **`pnpm eval extraction`** refuses to build a run from a label set with
+  sections still unread — a loud skip, exit 0, naming the file and the count.
+  Recall is measured against what a human wrote blind, so a partially labelled
+  set would be scored over a denominator missing exactly the sections nobody
+  read, and the run file would carry no trace of it. How much labelling is
+  enough is the time-box decision below, not a threshold in the harness; this
+  refuses only to put a number on an incomplete denominator.
+
+The quote check stays exact — a stored atom is verified byte for byte against
+its section body on write, so a quote that is not an exact substring encodes an
+atom that could never exist. Only the diagnosis is generous: on a failure the
+harness detects the whitespace-only near-miss that a quote copied out of the
+rendered document produces, where the source's hard wrap became a space, and
+prints the exact bytes the body holds for the labeller to paste. It never edits
+the label. Where the text genuinely is not there, it reports how far the quote
+matched before diverging.
 
 Labels are versioned **with** the corpus document, through a `documentHash`
 field, not independently. Independent versioning lets labels and documents
@@ -691,7 +737,7 @@ network path to anything of ours.
 
 | Command | What it does |
 | --- | --- |
-| `pnpm eval check` | corpus integrity, label validity, coverage, agreement |
+| `pnpm eval check` | corpus integrity, label validity, coverage, agreement, across all three labelling passes |
 | `pnpm eval skeleton <doc> <who>` | a blank label set for one document |
 | `pnpm eval score <run-file>` | the metrics of an adjudicated run |
 | `pnpm eval extraction` | the extractor over the corpus |
@@ -701,6 +747,30 @@ network path to anything of ours.
 
 Exit codes: `0` success, including a loud skip; `1` a failure or a regression;
 `2` a usage error.
+
+### What `check` is for
+
+It is the only feedback a labeller gets while the session is still open, so it
+is built to survive its own inputs. Three properties follow from that:
+
+- **Every pass, not just the first.** Section labels, the retrieval query sets
+  and the reconciliation edit verdicts are all validated, and each stays silent
+  when it does not exist yet — a labelling pass nobody has started is a state,
+  not an error. A query pointing at a section hash that is in no corpus
+  document, or a verdict on an edit id that is in no edit corpus, is caught in
+  the session rather than at the end of a run.
+- **One bad file costs one line.** A malformed file becomes a reported problem
+  naming the file and, through the heading path or the item's own id, the entry
+  — not a thrown parse error that takes the corpus listing, the coverage table
+  and the agreement figures down with it.
+- **It reports the position; it does not set a bar.** A `Status` block says what
+  is started, what is outstanding and what is double-labelled. Nothing is
+  double-labelled is a **warning**, because agreement is part of what a
+  defensible figure is made of — blind-first, double-labelled on a sample,
+  agreement published with the figure — and prose in the middle of a report is
+  the one thing nobody re-reads. It is not an error, because how much labelling
+  is enough is the time-box decision above, and a gate here would be the harness
+  inventing that threshold on the team's behalf.
 
 ### `latency`, the one slice that reports without judging
 
@@ -869,7 +939,19 @@ Recorded so each question is asked once.
   a function of variance, which is unknown until there are labels. The first
   corpus is sized by what the team can label blind inside a fixed time-box; the
   resulting confidence interval is reported, and if it is wider than the
-  decisions it has to support, the corpus grows.
+  decisions it has to support, the corpus grows. The mechanism, so that this
+  stays a decision the team can actually take: **every proportion the harness
+  reports carries a Wilson 95% interval beside it**, on the count that
+  proportion was computed over — extraction precision over the atoms emitted,
+  recall over the atoms a human wrote, miscategorisation over the atoms
+  accepted, retrieval precision over the atoms delivered, the reconciliation
+  false-positive rate over the findings emitted. Wilson rather than the normal
+  approximation because the interval exists for low counts near zero, which is
+  where the normal approximation collapses to a width of nothing. Where the
+  denominator is zero, both the rate and its interval are reported as absent:
+  a proportion of nothing is undefined, not 0 and not 1. Retrieval precision is
+  pooled across queries, whose atoms are not independent draws, so its interval
+  is a floor on the width rather than the whole of it.
 - **The minimum finding count** below which the reconciliation false-positive
   rate is not reported at all. The harness already demands it as
   `STANDFAST_EVAL_MIN_FINDINGS` and refuses to default it; what remains open

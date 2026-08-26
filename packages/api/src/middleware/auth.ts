@@ -139,7 +139,13 @@ export const requireApiKey: MiddlewareHandler<{
   Variables: AuthVariables;
 }> = async (c, next) => {
   const header = c.req.header("Authorization");
-  const token = header?.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  // RFC 7235 §2.1 makes the scheme case-insensitive, and a client library or a
+  // proxy is free to send `bearer`. Matching only `Bearer ` would refuse a
+  // correct credential, and the refusal would be counted against the caller's
+  // address like any other — so a client whose only fault is lower case would
+  // eventually be throttled for holding a valid key.
+  const token =
+    header && /^bearer /i.test(header) ? header.slice(7).trim() : "";
 
   if (!token) {
     throw refuse(c, "Missing API key.");

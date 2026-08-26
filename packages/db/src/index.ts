@@ -30,9 +30,12 @@ export {
   enqueueSectionExtract,
   getBoss,
   QUEUE_SCHEMA,
+  queueOptions,
+  SECTION_EXTRACT_DEADLINE_MS,
   SECTION_EXTRACT_QUEUE,
   type SectionExtractJob,
   stopBoss,
+  superviseQueue,
 } from "./queue.js";
 export * from "./repositories/actors.js";
 export * from "./repositories/atoms.js";

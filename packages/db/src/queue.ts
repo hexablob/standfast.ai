@@ -20,6 +20,18 @@ export const QUEUE_SCHEMA = "pgboss";
 export const SECTION_EXTRACT_QUEUE = "section.extract";
 
 /**
+ * How long one section gets before its model call is aborted.
+ *
+ * Lives beside the queue name because two things have to agree with it: the
+ * signal the handler is handed, and how long a graceful shutdown is willing to
+ * wait for the job in flight. pg-boss's own lease — `expire_seconds`, 900 by
+ * default — is deliberately far larger and is not a second opinion on this
+ * number: it exists to recover a job whose *process* died, not one whose model
+ * call is slow.
+ */
+export const SECTION_EXTRACT_DEADLINE_MS = 120_000;
+
+/**
  * What a worker is handed. Every field is a capability the enqueuer already
  * held: it is written from inside a `withActor` transaction, and no part of it
  * comes from client input.
@@ -57,8 +69,40 @@ export type EnqueueSectionExtract = (
 
 let boss: PgBoss | undefined;
 let started: Promise<PgBoss> | undefined;
+let supervising = false;
 
-function bossOptions(overrides: Partial<ConstructorOptions> = {}) {
+/**
+ * Declares that this process runs pg-boss's maintenance. Must be called before
+ * anything opens the queue.
+ *
+ * Maintenance is the only thing that returns a job whose worker died to the
+ * queue. `retryLimit` governs a handler that threw; a process killed
+ * mid-execution never throws, so its job stays `active` until pg-boss's `Boss`
+ * expires the lease — and `Boss` is started only when `supervise` is true. A
+ * worker without this strands every job it was holding when it was killed.
+ *
+ * Deliberately a role a process states once, rather than an argument to
+ * `getBoss()`. The handle is memoised process-wide, so per-call options would
+ * mean whichever caller happened to run first silently decided for all of them.
+ * With no options to pass there is nothing to disagree about; the only way left
+ * to get it wrong is to call this too late, and that throws.
+ */
+export function superviseQueue(): void {
+  if (started) {
+    throw new Error(
+      "superviseQueue() must run before the queue is opened — the handle is already started and its options are fixed.",
+    );
+  }
+  supervising = true;
+}
+
+/**
+ * The options this process opens pg-boss with.
+ *
+ * Exported so a test can assert on what a process actually constructs rather
+ * than on a comment claiming what it constructs.
+ */
+export function queueOptions() {
   return {
     db: {
       executeSql: async (text: string, values: unknown[]) => {
@@ -79,11 +123,12 @@ function bossOptions(overrides: Partial<ConstructorOptions> = {}) {
     // Polling is the correct default here; the worker sets its own interval.
     useListenNotify: false,
 
-    // Neither is wanted in a process that only sends. The worker turns
-    // supervision on for itself.
-    supervise: false,
+    // Off unless this process said otherwise: a sender has no job of its own to
+    // recover, and every supervisor competes for the same maintenance lock.
+    supervise: supervising,
+
+    // Nothing here is on a cron.
     schedule: false,
-    ...overrides,
   } satisfies ConstructorOptions;
 }
 
@@ -99,7 +144,20 @@ export async function getBoss(): Promise<PgBoss> {
   if (started) return started;
 
   started = (async () => {
-    const instance = new PgBoss(bossOptions());
+    const instance = new PgBoss(queueOptions());
+
+    // pg-boss reports background failures — a fetch that lost its connection, a
+    // maintenance sweep that could not take its lock — as an `error` event, and
+    // an `error` event with no listener terminates the process. Both defaults
+    // are wrong here. Terminating kills whatever the worker is extracting and
+    // leaves behind exactly the stranded `active` job that supervision exists to
+    // recover; swallowing hides a queue that has quietly stopped maintaining
+    // itself. Attached here rather than in each caller because every process
+    // that opens the queue is exposed, including the ones that only send.
+    instance.on("error", (error: unknown) => {
+      console.error("pg-boss:", error);
+    });
+
     await instance.start();
     boss = instance;
     return instance;
@@ -136,8 +194,15 @@ export const enqueueSectionExtract: EnqueueSectionExtract = async (
 
 export async function stopBoss(): Promise<void> {
   if (boss) {
-    await boss.stop({ graceful: true });
+    // `graceful` stops fetching and waits for the job in flight. pg-boss's
+    // default wait is 30s — shorter than the deadline that job was given — so a
+    // worker shut down mid-extraction would have its work failed and retried for
+    // no reason other than the two numbers disagreeing. Waiting the deadline out
+    // costs nothing when nothing is in flight: pg-boss polls for pending work
+    // rather than sleeping out the timeout.
+    await boss.stop({ graceful: true, timeout: SECTION_EXTRACT_DEADLINE_MS });
     boss = undefined;
     started = undefined;
+    supervising = false;
   }
 }

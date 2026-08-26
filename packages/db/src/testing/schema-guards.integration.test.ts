@@ -82,6 +82,70 @@ describe("the application role cannot bypass RLS", () => {
   });
 });
 
+/**
+ * The relation kinds that must appear in `WIRE_ALLOWLIST` or
+ * `NON_TENANT_TABLES`.
+ *
+ * `r` is an ordinary table and holds rows. `p` is a partitioned table: it holds
+ * no rows itself, but it declares the column set its partitions serve and it is
+ * the name a query uses, so a review that skipped it would review nothing that
+ * anybody reads. Each partition is an `r` in its own right and is classified in
+ * its own right — partitioning a table therefore multiplies the review rather
+ * than escaping it.
+ */
+const CLASSIFIED = new Set(["r", "p"]);
+
+/**
+ * Why a relation of this kind may not live in `public` at all, in a sentence
+ * that completes `<name> …`.
+ *
+ * A kind absent from this map and from `CLASSIFIED` is refused too, with the
+ * kind quoted back. The failure this file was hardened against was a relation
+ * kind the query did not think to ask about, so silence is not a pass.
+ */
+const REFUSED: Readonly<Record<string, string>> = {
+  v: "is a view, and can select columns this guard reviews table by table",
+  m: "is a materialized view, and holds its own copy of columns this guard reviews table by table",
+  f: "is a foreign table, and reads rows from another server, and sends rows to one when written to",
+};
+
+/**
+ * Every relation in `public` that can hold or serve a row.
+ *
+ * `pg_class`, not `information_schema`. The information schema is the SQL
+ * standard's view of the catalogue, and a materialized view is not in the
+ * standard: it appears in neither `information_schema.tables` nor
+ * `information_schema.columns`. A materialized view selecting `documents.body`
+ * was therefore invisible to a guard built on that view of the catalogue, while
+ * physically holding every body it selected. `pg_class` is the catalogue itself
+ * and has a row for every relation the database has.
+ *
+ * The kinds filtered out here cannot carry a row of anyone's data. An index
+ * copies indexed values, but cannot be selected from and can only index columns
+ * of a relation that is itself classified, so the base table's review governs
+ * it; `I` is the same for a partitioned index. A sequence is a counter of fixed
+ * shape with no room for a row. A composite type is a shape and has no storage.
+ * TOAST tables are absent from the list on purpose: they hold the overflow of a
+ * table's own wide columns, but Postgres puts them in `pg_toast` and offers no
+ * way to move one, so the schema filter has already excluded them and a `t` in
+ * `public` would be an anomaly worth failing on.
+ *
+ * `public` only, and that is the entire exclusion. pgboss owns its schema,
+ * drizzle its migration ledger, and `auth` holds a function and no storage.
+ * Nothing is excluded by ownership: `ALTER EXTENSION … ADD TABLE` would let an
+ * ordinary table adopt an extension as cover, and `vector` and `pg_trgm` own no
+ * relation here that would need the exemption.
+ */
+const publicRelations = async () =>
+  (
+    await admin.query<{ relkind: string; relname: string }>(
+      `select relkind::text as relkind, relname from pg_class
+        where relnamespace = 'public'::regnamespace
+          and relkind not in ('i', 'I', 'S', 'c')
+        order by relname`,
+    )
+  ).rows;
+
 describe("invariant 3 — nothing that could hold source code", () => {
   // Allowlist, never denylist (docs/02-principles.md, 9). A denylist would
   // have to anticipate the name of the column nobody thought to forbid.
@@ -103,19 +167,12 @@ describe("invariant 3 — nothing that could hold source code", () => {
   // classified, and blind to a new table. It iterates the allowlist's own keys,
   // so a table a migration created and nobody registered is checked by nothing
   // at all, and the sentence two comments up quietly stops being true for it.
-  // This reads the schema instead of the map, and requires the two to agree.
-  //
-  // `public` only: the invariant is about the application's own tables. pgboss
-  // owns its schema, drizzle its migration ledger, and `auth` holds a function
-  // and no storage. Base tables only, because a view stores nothing and has no
-  // column set of its own to review — views are dealt with below rather than
-  // waved through by the filter.
+  // The two checks below read the schema instead of the map, and require the
+  // two to agree.
   it("classifies every table in the schema", async () => {
-    const r = await admin.query<{ table_name: string }>(
-      `select table_name from information_schema.tables
-        where table_schema = 'public' and table_type = 'BASE TABLE'`,
-    );
-    const live = r.rows.map((row) => row.table_name);
+    const live = (await publicRelations())
+      .filter((row) => CLASSIFIED.has(row.relkind))
+      .map((row) => row.relname);
     const classified = new Set([
       ...Object.keys(WIRE_ALLOWLIST),
       ...Object.keys(NON_TENANT_TABLES),
@@ -158,23 +215,26 @@ describe("invariant 3 — nothing that could hold source code", () => {
     expect(both).toEqual([]);
   });
 
-  // Views are in scope, and the decision is that there are none. A view is a
-  // serving surface the column guard cannot see through: it can select any
-  // column of any table beneath it, including one nobody allowlisted, and
-  // information_schema reports those columns as the view's own rather than as
-  // the table's. Rather than teach this file to resolve a view's dependencies,
-  // `public` holds base tables, and the first view to want a home here has to
-  // come through this test and be argued for.
-  it("holds no views in public", async () => {
-    const r = await admin.query<{ table_name: string }>(
-      `select table_name from information_schema.tables
-        where table_schema = 'public' and table_type = 'VIEW'`,
-    );
-    const views = r.rows.map(
-      (row) =>
-        `${row.table_name} is a view, and can select columns this guard reviews table by table. Decide what it may expose and record the decision here.`,
-    );
-    expect(views).toEqual([]);
+  // Serving surfaces are in scope, and the decision is that there are none. A
+  // view can select any column of any table beneath it, including one nobody
+  // allowlisted, and the catalogue reports those columns as the view's own
+  // rather than as the table's. A materialized view does that and keeps the
+  // copy. A foreign table reads rows from another server, and a write to one
+  // sends rows off this machine. Rather than teach this file to resolve a
+  // view's dependencies, `public` holds tables, and the first relation of any
+  // of these kinds to want a home here has to come through this test and be
+  // argued for.
+  it("holds nothing in public that serves rows this guard cannot review", async () => {
+    const refused = (await publicRelations())
+      .filter((row) => !CLASSIFIED.has(row.relkind))
+      .map(
+        (row) =>
+          `${row.relname} ${
+            REFUSED[row.relkind] ??
+            `is a relation of kind '${row.relkind}', which this guard has no ruling on`
+          }. Decide what it may expose and record the decision here.`,
+      );
+    expect(refused).toEqual([]);
   });
 });
 

@@ -1,13 +1,20 @@
 import type { LoadedDocument } from "./corpus.js";
-import type { LabelSet } from "./labels.js";
+import { type LabelSet, UNREAD } from "./labels.js";
 
 /**
  * A blank label set for one document and one labeller.
  *
- * Every section is listed with an empty `expect`, and the labeller either fills
- * it in or leaves it empty to mean "this section states nothing". Sections they
- * have not reached yet are deleted from the file — absence is what "unlabelled"
- * means, and the coverage report reads it that way.
+ * Every section is listed with `expect: "unread"`, which asserts nothing. The
+ * labeller replaces that marker with a list of expected atoms, or with `[]` to
+ * say "this section states no decision, convention or constraint" — a real
+ * label, and the one precision is measured against.
+ *
+ * The marker is what makes the distinction structural. Listing every section
+ * with an empty `expect` would make a freshly generated file a document-wide
+ * assertion that nothing in it states anything: full coverage before any work,
+ * falling as the labeller deleted the entries they never reached, and perfect
+ * agreement between two people who had each done nothing. Silence now has a
+ * spelling of its own, and it cannot be reached by inaction.
  *
  * The section *bodies* are deliberately not copied in. They are two files away
  * in `eval/corpus/`, the heading path says which one, and duplicating them here
@@ -30,7 +37,7 @@ export function labelSkeleton(
       ordinal: section.ordinal,
       headingPath: section.headingPath,
       sectionHash: section.sectionHash,
-      expect: [],
+      expect: UNREAD,
     })),
   };
 }

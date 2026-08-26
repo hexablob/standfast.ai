@@ -9,7 +9,7 @@ import { makeSectionExtractHandler } from "@standfast/worker";
 import { Client } from "pg";
 import type { Corpus, LoadedDocument } from "./corpus.js";
 import type { LabelSet } from "./labels.js";
-import { expectedAtomId } from "./labels.js";
+import { expectations, expectedAtomId } from "./labels.js";
 import type { AdjudicatedAtomRecord, RunFile } from "./run.js";
 
 /**
@@ -243,11 +243,17 @@ export async function runExtraction(
   }));
 
   const covered = new Set(documents.map((d) => d.id));
+  // Only sections a human decided about are in the recall denominator. A
+  // section still carrying the skeleton's `UNREAD` marker contributes nothing,
+  // because nobody has said what it contains — counting it as "expects zero
+  // atoms" is the assertion this format exists to make impossible.
   const expectedAtomIds = options.labels
     .filter((set) => covered.has(set.document))
     .flatMap((set) =>
       set.sections.flatMap((section) =>
-        section.expect.map((_, index) => expectedAtomId(section, index)),
+        (expectations(section) ?? []).map((_, index) =>
+          expectedAtomId(section, index),
+        ),
       ),
     );
 

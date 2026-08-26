@@ -218,10 +218,12 @@ export const TENANT_TABLES = Object.keys(WIRE_ALLOWLIST);
 /**
  * Tables that exist in `public` and are deliberately not tenant tables.
  *
- * The map above is exhaustive over the schema: `schema-guards` reads `public`
- * and requires every base table in it to appear in exactly one of these two
- * maps, so a migration that adds a table nobody classified fails before it
- * merges. Without that, the allowlist is only strong against a column added to
+ * The map above is exhaustive over the schema: `schema-guards` reads `pg_class`
+ * for `public` and requires every table and partitioned table in it to appear
+ * in exactly one of these two maps, so a migration that adds a table nobody
+ * classified fails before it merges. A view, a materialized view or a foreign
+ * table has no entry to earn — the same guard refuses it outright, because it
+ * serves columns that are reviewed one table at a time. Without that, the allowlist is only strong against a column added to
  * a table someone already thought about — it iterates its own keys, and a table
  * it does not know exists is a table it cannot check.
  *

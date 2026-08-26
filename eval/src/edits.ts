@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FINDING_VERDICTS } from "@standfast/core";
 import { z } from "zod";
+import type { Problem } from "./corpus.js";
 import { ATOM_KINDS } from "./labels.js";
 import { EDIT_SLICES } from "./metrics/reconciliation.js";
+import { type Loaded, loadDirectory } from "./parse.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -50,18 +51,19 @@ export type Edit = z.infer<typeof Edit>;
 export type EditCorpus = z.infer<typeof EditCorpus>;
 
 /** Null when `eval/corpus/edits.json` does not exist — the skip case. */
-export function loadEditCorpus(root: string): EditCorpus | null {
-  const path = join(root, "corpus", "edits.json");
-  if (!existsSync(path)) {
-    return null;
-  }
-  const parsed = EditCorpus.safeParse(JSON.parse(readFileSync(path, "utf8")));
-  if (!parsed.success) {
-    throw new Error(
-      `corpus/edits.json is not a valid edit corpus:\n${parsed.error.message}`,
-    );
-  }
-  return parsed.data;
+/**
+ * The edit corpus, as at most one value plus any Problems parsing it.
+ *
+ * `values[0]` is the corpus or absent; a malformed file is a reported Problem
+ * rather than a throw, so `check` still prints everything else it knows.
+ */
+export function loadEditCorpus(root: string): Loaded<EditCorpus> {
+  return loadDirectory(
+    join(root, "corpus"),
+    (name) => name === "edits.json",
+    EditCorpus,
+    () => "corpus/edits.json",
+  );
 }
 
 /**
@@ -89,25 +91,75 @@ export const EditLabelSet = z.object({
 
 export type EditLabelSet = z.infer<typeof EditLabelSet>;
 
-export function loadEditLabels(root: string): EditLabelSet[] {
-  const directory = join(root, "labels");
-  if (!existsSync(directory)) {
+export function loadEditLabels(root: string): Loaded<EditLabelSet> {
+  return loadDirectory(
+    join(root, "labels"),
+    (name) => /^edits\.[^.]+\.json$/.test(name),
+    EditLabelSet,
+    (name) => `labels/${name}`,
+  );
+}
+
+/**
+ * What `check` can say about edit verdicts before a checking session exists.
+ *
+ * A verdict names an edit by id. An id that is in no edit corpus is a verdict
+ * that will never be scored, and `scoreReconciliation` throws on it at the end
+ * of a run — this says so in the labelling session instead.
+ */
+export function checkEditLabels(
+  corpus: EditCorpus | undefined,
+  sets: readonly EditLabelSet[],
+): Problem[] {
+  if (sets.length === 0) {
     return [];
   }
-  return readdirSync(directory)
-    .filter((name) => /^edits\.[^.]+\.json$/.test(name))
-    .sort()
-    .map((name) => {
-      const parsed = EditLabelSet.safeParse(
-        JSON.parse(readFileSync(join(directory, name), "utf8")),
-      );
-      if (!parsed.success) {
-        throw new Error(
-          `labels/${name} is not a valid edit label set:\n${parsed.error.message}`,
-        );
+  if (!corpus) {
+    return [
+      {
+        level: "error",
+        message:
+          "labels/edits.*.json exist but eval/corpus/edits.json does not — " +
+          "verdicts on edits that are not in the repository",
+      },
+    ];
+  }
+
+  const known = new Set(corpus.edits.map((edit) => edit.id));
+  const problems: Problem[] = [];
+  for (const set of sets) {
+    const seen = new Set<string>();
+    for (const verdict of set.verdicts) {
+      if (!known.has(verdict.edit)) {
+        problems.push({
+          level: "error",
+          message:
+            `labels/edits.${set.labeller}.json: verdict on '${verdict.edit}', ` +
+            "which is in no edit of eval/corpus/edits.json",
+        });
       }
-      return parsed.data;
-    });
+      if (seen.has(verdict.edit)) {
+        problems.push({
+          level: "error",
+          message: `labels/edits.${set.labeller}.json: '${verdict.edit}' is judged twice`,
+        });
+      }
+      seen.add(verdict.edit);
+    }
+    if (!set.blind) {
+      problems.push({
+        level: "warning",
+        message: `labels/edits.${set.labeller}.json: not blind-first — any run using it is contaminated`,
+      });
+    }
+    if (set.modelAssisted) {
+      problems.push({
+        level: "warning",
+        message: `labels/edits.${set.labeller}.json: model-assisted — any run using it is marked as such`,
+      });
+    }
+  }
+  return problems;
 }
 
 /**

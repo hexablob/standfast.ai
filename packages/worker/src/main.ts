@@ -21,9 +21,11 @@ import {
   closePool,
   extractionPortIds,
   getBoss,
+  SECTION_EXTRACT_DEADLINE_MS,
   SECTION_EXTRACT_QUEUE,
   type SectionExtractJob,
   stopBoss,
+  superviseQueue,
 } from "@standfast/db";
 import { AnthropicExtractor, AnthropicJudge } from "./adapters/anthropic.js";
 import { BgeEmbedder } from "./adapters/bge.js";
@@ -205,6 +207,62 @@ export function resolvePorts(env = process.env): {
   return { ports, egress };
 }
 
+/**
+ * Everything this process must settle before it opens the queue.
+ *
+ * Both halves are the same fact from two ends: a worker is the only process
+ * here that can leave a job `active` by dying, so it is the one that has to run
+ * the maintenance that takes such a job back, and the one that owes its jobs an
+ * orderly death when the death is scheduled.
+ *
+ * Shutdown is SIGINT and SIGTERM, in that order and both awaited: `stopBoss`
+ * stops fetching and then waits out the job in flight, and closing the pool
+ * first would make the completion it is waiting for fail. A job still running
+ * when that wait expires is failed by pg-boss and retried — not lost, but
+ * redone, which is why the wait it is given is the job's own deadline rather
+ * than pg-boss's shorter default.
+ */
+export function becomeWorker(
+  /**
+   * How the process ends. A seam, not a setting: it exists so the shutdown path
+   * can be exercised without ending the test runner, and production passes
+   * nothing.
+   */
+  exit: (code: number) => void = (code) => process.exit(code),
+): void {
+  superviseQueue();
+
+  let shuttingDown = false;
+
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      // That wait can last as long as an extraction, so a second signal must not
+      // start a second shutdown racing the first to `exit`. Announcing it is not
+      // decoration either: an operator who sees nothing for two minutes concludes
+      // the process is wedged and reaches for SIGKILL, which is precisely the
+      // death that strands a job.
+      if (shuttingDown) return;
+      shuttingDown = true;
+      process.stderr.write(
+        `${signal} received; finishing the job in flight before exit\n`,
+      );
+
+      void stopBoss()
+        .then(() => closePool())
+        .then(() => {
+          exit(0);
+        })
+        .catch((error: unknown) => {
+          // Never silently. A shutdown that failed half-way has left a job
+          // `active` with nothing about to complete it, and the exit code is the
+          // only place left that can say so.
+          console.error(error);
+          exit(1);
+        });
+    });
+  }
+}
+
 async function main(): Promise<void> {
   // Before fetching a single job. A worker on a superuser connection is not a
   // degraded mode — it is a system with no tenant isolation that looks entirely
@@ -213,6 +271,8 @@ async function main(): Promise<void> {
 
   const { ports, egress } = resolvePorts();
   const handle = makeSectionExtractHandler({ ports });
+
+  becomeWorker();
   const boss = await getBoss();
 
   await boss.work<SectionExtractJob>(
@@ -220,7 +280,7 @@ async function main(): Promise<void> {
     { batchSize: 1 },
     async ([job]) => {
       if (!job) return;
-      await handle(job.data, AbortSignal.timeout(120_000));
+      await handle(job.data, AbortSignal.timeout(SECTION_EXTRACT_DEADLINE_MS));
     },
   );
 
@@ -230,17 +290,6 @@ async function main(): Promise<void> {
   // Rule 3: egress is disclosable. Printed at start-up so answering "what does
   // this deployment send, and to whom" never requires reading a source file.
   process.stderr.write(`${describeEgress(egress)}\n`);
-
-  // Graceful, in that order. pg-boss's own stop returns jobs in flight to the
-  // queue rather than losing them; closing the pool first would make that
-  // return fail.
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.on(signal, () => {
-      void stopBoss()
-        .then(() => closePool())
-        .then(() => process.exit(0));
-    });
-  }
 }
 
 if (process.argv[1]?.endsWith("main.js")) {

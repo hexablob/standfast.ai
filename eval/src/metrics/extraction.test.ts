@@ -38,14 +38,14 @@ describe("scoreExtraction", () => {
 
     expect(score.emitted).toBe(3);
     expect(score.accepted).toBe(2);
-    expect(score.precision).toBeCloseTo(2 / 3);
+    expect(score.precision.rate).toBeCloseTo(2 / 3);
   });
 
   it("does not subtract a miscategorised atom from precision", () => {
     const score = scoreExtraction([accepted("x#0", true)], ["x#0"]);
 
-    expect(score.precision).toBe(1);
-    expect(score.miscategorised).toEqual({ count: 1, rate: 1 });
+    expect(score.precision.rate).toBe(1);
+    expect(score.miscategorised).toMatchObject({ count: 1, rate: 1 });
   });
 
   it("reports precision as null when nothing was emitted", () => {
@@ -53,8 +53,9 @@ describe("scoreExtraction", () => {
     // either. There is no measurement, and the run has to say so.
     const score = scoreExtraction([], ["x#0"]);
 
-    expect(score.precision).toBeNull();
-    expect(score.recall).toEqual({ expected: 1, matched: 0, rate: 0 });
+    expect(score.precision.rate).toBeNull();
+    expect(score.precision.interval).toBeNull();
+    expect(score.recall).toMatchObject({ expected: 1, matched: 0, rate: 0 });
   });
 
   it("counts the three rejection reasons separately", () => {
@@ -79,7 +80,7 @@ describe("scoreExtraction", () => {
     const many = Array.from({ length: 99 }, () => accepted(null));
     const score = scoreExtraction([...many, rejected("unsupported")], []);
 
-    expect(score.precision).toBeCloseTo(0.99);
+    expect(score.precision.rate).toBeCloseTo(0.99);
     expect(score.gate).toEqual({ unsupported: 1, passed: false });
   });
 
@@ -98,7 +99,11 @@ describe("scoreExtraction", () => {
       ["x#0", "x#1", "x#2"],
     );
 
-    expect(score.recall).toEqual({ expected: 3, matched: 2, rate: 2 / 3 });
+    expect(score.recall).toMatchObject({
+      expected: 3,
+      matched: 2,
+      rate: 2 / 3,
+    });
   });
 
   it("keeps an unmatched acceptance out of recall but inside precision", () => {
@@ -107,7 +112,7 @@ describe("scoreExtraction", () => {
     // written blind, so it cannot count there.
     const score = scoreExtraction([accepted(null)], ["x#0"]);
 
-    expect(score.precision).toBe(1);
+    expect(score.precision.rate).toBe(1);
     expect(score.recall.matched).toBe(0);
   });
 

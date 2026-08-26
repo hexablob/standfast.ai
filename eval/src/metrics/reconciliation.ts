@@ -16,6 +16,14 @@
  *   editing the document.
  */
 
+import { type Interval, proportion, wilsonInterval } from "./interval.js";
+
+// `wilsonInterval` moved to ./interval.ts when extraction and retrieval needed
+// the same interval. Re-exported here because this module is where it was first
+// published and its tests still address it by this path — one implementation,
+// two names for it, rather than a second implementation.
+export { type Interval, proportion, wilsonInterval };
+
 export const EDIT_SLICES = [
   "seeded-violation",
   "seeded-near-miss",
@@ -52,42 +60,19 @@ export type ReconciliationScore = {
   /** falsePositives / emitted. Null when nothing was emitted — not 0. */
   readonly rate: number | null;
   /** Wilson 95% interval on the rate. Null when nothing was emitted. */
-  readonly interval: { low: number; high: number } | null;
+  readonly interval: Interval | null;
   /** Edits labelled `violated` that produced no `violated` finding. */
   readonly misses: number;
   readonly missRate: number | null;
+  /**
+   * Wilson 95% interval on `missRate`. Its denominator is the edits labelled
+   * `violated`, not the findings emitted — a different and usually much smaller
+   * n than the rate above, so the two intervals are not comparable widths and
+   * are deliberately computed apart.
+   */
+  readonly missInterval: Interval | null;
   readonly perSlice: Record<EditSlice, SliceScore>;
 };
-
-/**
- * Wilson score interval at 95% for a proportion of `successes` in `n` trials.
- *
- * Wilson rather than the normal approximation because the whole reason the
- * interval exists is low counts near zero, which is exactly where the normal
- * approximation collapses to a width of nothing.
- */
-export function wilsonInterval(
-  successes: number,
-  n: number,
-): { low: number; high: number } {
-  if (n <= 0) {
-    throw new Error("a confidence interval over zero trials is not a thing");
-  }
-  const z = 1.959964; // 95%
-  const p = successes / n;
-  const z2 = z * z;
-  const denominator = 1 + z2 / n;
-  const centre = p + z2 / (2 * n);
-  const margin = z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n));
-  return {
-    low: Math.max(0, (centre - margin) / denominator),
-    high: Math.min(1, (centre + margin) / denominator),
-  };
-}
-
-function ratio(numerator: number, denominator: number): number | null {
-  return denominator === 0 ? null : numerator / denominator;
-}
 
 /**
  * Throws on broken input rather than skipping it: a finding on an edit the
@@ -157,15 +142,16 @@ export function scoreReconciliation(
     }
   }
 
+  const missed = proportion(misses, expectedViolated);
   return {
     edits: edits.length,
     findings: findings.length,
     emitted,
     falsePositives,
-    rate: ratio(falsePositives, emitted),
-    interval: emitted === 0 ? null : wilsonInterval(falsePositives, emitted),
+    ...proportion(falsePositives, emitted),
     misses,
-    missRate: ratio(misses, expectedViolated),
+    missRate: missed.rate,
+    missInterval: missed.interval,
     perSlice,
   };
 }

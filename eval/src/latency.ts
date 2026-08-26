@@ -499,12 +499,24 @@ export function boundProviders(
   env: Record<string, string | undefined> = process.env,
 ): { queryEmbedding: string; reranker: string; real: boolean } {
   const allowlist = env["STANDFAST_EGRESS_ALLOWLIST"];
+  // The read path binds a query embedder only for an entry whose purpose is
+  // `query-embedding` (packages/api/src/ports.ts); an allowlist naming
+  // extraction or judge leaves retrieval with no embedder at all. Reading the
+  // variable's mere presence would report a bound provider for an allowlist
+  // about something else entirely, and — because that flag is what suppresses
+  // the floor warning below — would present a run with no dense generator as
+  // if a provider had been measured. The warning is the honest part of this
+  // report, so what turns it off has to be the same condition the API uses.
+  const queryEmbedding = (allowlist ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith("query-embedding"));
   return {
-    queryEmbedding: allowlist
-      ? `bound via STANDFAST_EGRESS_ALLOWLIST (${allowlist})`
+    queryEmbedding: queryEmbedding
+      ? `bound via STANDFAST_EGRESS_ALLOWLIST (${queryEmbedding})`
       : "unbound — no STANDFAST_EGRESS_ALLOWLIST entry for query-embedding",
     reranker: "unbound — no provider has passed the acceptance test",
-    real: Boolean(allowlist),
+    real: Boolean(queryEmbedding),
   };
 }
 

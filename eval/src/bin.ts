@@ -7,6 +7,7 @@ import { resolvePorts } from "@standfast/worker";
 import { agreements } from "./agreement.js";
 import { checkCorpus, loadCorpus, type Problem } from "./corpus.js";
 import {
+  checkEditLabels,
   FindingsFile,
   loadEditCorpus,
   loadEditLabels,
@@ -16,9 +17,10 @@ import {
 import {
   checkLabels,
   coverage,
-  expectedAtomId,
+  expectations,
   labelFileName,
   loadLabels,
+  unreadSections,
 } from "./labels.js";
 import {
   boundProviders,
@@ -31,6 +33,7 @@ import {
   scaleFor,
 } from "./latency.js";
 import { scoreExtraction } from "./metrics/extraction.js";
+import { formatProportion } from "./metrics/interval.js";
 import {
   type Distribution,
   distribution,
@@ -44,7 +47,7 @@ import { Baselines, compareToBaseline } from "./metrics/regression.js";
 import { type BudgetScore, scoreRetrieval } from "./metrics/retrieval.js";
 import { failure, heading, line, skipped, warning } from "./output.js";
 import { extractorAvailable } from "./preconditions.js";
-import { loadQuerySets, RetrievalRunFile } from "./queries.js";
+import { checkQuerySets, loadQuerySets, RetrievalRunFile } from "./queries.js";
 import { READ_PATH, runRetrieval } from "./retrieval.js";
 import { RunFile } from "./run.js";
 import { evalDatabaseUrl, runExtraction } from "./runner.js";
@@ -81,7 +84,22 @@ function report(problems: Problem[]): number {
 
 function check(): number {
   const corpus = loadCorpus(ROOT);
+  // Every loader reports its bad files rather than throwing on the first, so a
+  // single typo costs the labeller one line of the report instead of all of it.
   const labels = loadLabels(ROOT);
+  const queries = loadQuerySets(ROOT);
+  const editLabels = loadEditLabels(ROOT);
+  const editCorpus = loadEditCorpus(ROOT);
+  const problems: Problem[] = [
+    ...checkCorpus(corpus),
+    ...labels.problems,
+    ...checkLabels(corpus, labels.values),
+    ...queries.problems,
+    ...editCorpus.problems,
+    ...editLabels.problems,
+    ...checkQuerySets(corpus, queries.values),
+    ...checkEditLabels(editCorpus.values[0], editLabels.values),
+  ];
 
   heading(`Corpus ${corpus.revision}`);
   for (const document of corpus.documents) {
@@ -91,28 +109,47 @@ function check(): number {
   }
 
   heading("Coverage");
-  if (labels.length === 0) {
+  if (labels.values.length === 0) {
     line("  No label sets. The corpus is not a labelled corpus yet.");
     line("  Start one: pnpm eval skeleton <document> <labeller>");
   }
-  for (const row of coverage(corpus, labels)) {
+  let sectionsDecided = 0;
+  let sectionsUnread = 0;
+  for (const row of coverage(corpus, labels.values)) {
     if (row.labellers.length === 0) {
       line(`  ${row.document.padEnd(26)} unlabelled`);
       continue;
     }
     for (const by of row.labellers) {
+      sectionsDecided += by.labelled;
+      sectionsUnread += by.unread;
       const percent = Math.round((by.labelled / row.sections) * 100);
       line(
-        `  ${row.document.padEnd(26)} ${by.labeller.padEnd(10)} ${by.labelled}/${row.sections} (${percent}%)`,
+        `  ${row.document.padEnd(26)} ${by.labeller.padEnd(10)} ${by.labelled}/${row.sections} (${percent}%)` +
+          (by.unread > 0 ? `  ${by.unread} unread` : ""),
       );
     }
   }
 
-  const pairs = agreements(labels);
+  const pairs = agreements(labels.values);
   heading("Inter-labeller agreement");
+  if (pairs.length === 0 && labels.values.length > 0) {
+    // A warning, not prose and not an error. docs/12-evaluation.md makes
+    // agreement part of what a defensible figure is made of — "blind-first,
+    // double-labelled on a sample, agreement published with the figure" — so
+    // its absence is a fact about the instrument, and prose in the middle of a
+    // report is the one thing nobody re-reads. It is not an error because how
+    // much labelling is enough is the time-box decision docs/12 leaves to the
+    // team, and a gate here would be this file inventing that threshold.
+    problems.push({
+      level: "warning",
+      message:
+        "nothing is double-labelled. A precision figure without an agreement " +
+        "figure beside it is a statement about one person's taste.",
+    });
+  }
   if (pairs.length === 0) {
-    line("  Nothing double-labelled. A precision figure without an agreement");
-    line("  figure beside it is a statement about one person's taste.");
+    line("  Nothing double-labelled.");
   }
   for (const pair of pairs) {
     const jaccard =
@@ -120,15 +157,69 @@ function check(): number {
     line(
       `  ${pair.document} ${pair.pair.join(" vs ")}: ${pair.overlap} shared sections, ` +
         `emptiness ${pair.emptiness.agreed}/${pair.emptiness.of}, ` +
-        `count ${pair.count.agreed}/${pair.count.of}, quote jaccard ${jaccard}`,
+        `count ${pair.count.agreed}/${pair.count.of}, quote jaccard ${jaccard}` +
+        (pair.unread > 0
+          ? `, ${pair.unread} shared section(s) one of them has not read`
+          : ""),
     );
   }
 
+  heading("Retrieval queries");
+  if (queries.values.length === 0) {
+    line("  No query sets. Retrieval precision has nothing to run against.");
+  }
+  for (const set of queries.values) {
+    line(
+      `  ${set.labeller.padEnd(26)} ${set.queries.length} queries, budgets ${set.budgets.join("/")}`,
+    );
+  }
+
+  heading("Reconciliation edits");
+  const edits = editCorpus.values[0];
+  if (!edits) {
+    line("  No edit corpus. The false-positive rate has nothing to run");
+    line("  against.");
+  } else {
+    line(`  ${edits.edits.length} edits in eval/edits/`);
+    for (const set of editLabels.values) {
+      line(`  ${set.labeller.padEnd(26)} ${set.verdicts.length} verdicts`);
+    }
+    if (editLabels.values.length === 0) {
+      line("  No verdicts yet — write eval/labels/edits.<labeller>.json.");
+    }
+  }
+
+  // What is and is not done, in one place. How much is enough is not decided
+  // here: docs/12-evaluation.md sizes the corpus by the team's time-box and
+  // reports the resulting interval, so this states the position and stops.
+  heading("Status");
+  const totalSections = corpus.documents.reduce(
+    (n, d) => n + d.sections.length,
+    0,
+  );
+  if (labels.values.length === 0) {
+    line(`  extraction     not started (0 of ${totalSections} sections)`);
+  } else {
+    line(
+      `  extraction     ${sectionsDecided} section(s) decided, ${sectionsUnread} still unread, ` +
+        `${pairs.length} double-labelled pair(s)`,
+    );
+  }
+  line(
+    `  retrieval      ${queries.values.length === 0 ? "not started" : `${queries.values.length} query set(s)`}`,
+  );
+  line(
+    `  reconciliation ${
+      !edits
+        ? "not started (no edit corpus)"
+        : editLabels.values.length === 0
+          ? "edits written, no verdicts yet"
+          : `${editLabels.values.length} verdict set(s)`
+    }`,
+  );
+
   heading("Problems");
-  const errors = report([
-    ...checkCorpus(corpus),
-    ...checkLabels(corpus, labels),
-  ]);
+  const errors = report(problems);
   if (errors === 0) {
     line("  No errors.");
   }
@@ -166,9 +257,11 @@ function skeleton(
 
   line(`Wrote ${path} — ${document.sections.length} sections.`);
   line();
-  line(`Read eval/corpus/${document.file} and fill in 'expect' for each`);
-  line("section. Leave it empty to say the section states nothing. Delete the");
-  line("entries you have not reached — absence is what 'unlabelled' means.");
+  line(`Read eval/corpus/${document.file}. Every 'expect' says "unread",`);
+  line("which asserts nothing. Replace each one you reach with a list of the");
+  line("atoms the section states, or with [] to say it states none. Leave the");
+  line('rest saying "unread" — that is what unlabelled means, and nothing');
+  line("counts it.");
   line();
   line("Do not look at the extractor's output first. That is the method, not");
   line("a nicety: grading anchors on what is present and cannot notice what");
@@ -221,7 +314,7 @@ function score(path: string | undefined): number {
   }
   line();
   line(
-    `  precision      ${result.precision} (${result.accepted}/${result.emitted})`,
+    `  precision      ${formatProportion(result.precision)} (${result.accepted}/${result.emitted})`,
   );
   line(`  unsupported    ${result.rejections.unsupported}`);
   line(`  not knowledge  ${result.rejections["not-knowledge"]}`);
@@ -230,8 +323,16 @@ function score(path: string | undefined): number {
     `  miscategorised ${result.miscategorised.count} (reported, not a precision failure)`,
   );
   line(
-    `  recall         ${result.recall.rate} (${result.recall.matched}/${result.recall.expected})`,
+    `  recall         ${formatProportion(result.recall)} (${result.recall.matched}/${result.recall.expected})`,
   );
+  line();
+  line(
+    "  Each interval is Wilson at 95% over the count in brackets. A band wider",
+  );
+  line(
+    "  than the decision it has to support means the corpus, not the model,",
+  );
+  line("  is what needs work (docs/12-evaluation.md).");
   line();
 
   if (run.slice === "self") {
@@ -261,19 +362,25 @@ function score(path: string | undefined): number {
     JSON.parse(readFileSync(join(ROOT, "baselines.json"), "utf8")),
   );
   const entry = baselines.metrics[run.metric];
-  if (result.precision === null) {
+  if (result.precision.rate === null) {
     warning("nothing was emitted — there is no precision to compare");
     return 0;
   }
 
-  const comparison = compareToBaseline(result.precision, entry);
+  const comparison = compareToBaseline(result.precision.rate, entry);
   line(`  ${comparison.status.toUpperCase()}: ${comparison.reason}`);
   return comparison.fails ? 1 : 0;
 }
 
 async function extraction(): Promise<number> {
   const corpus = loadCorpus(ROOT);
-  const labels = loadLabels(ROOT);
+  const loaded = loadLabels(ROOT);
+  if (loaded.problems.some((p) => p.level === "error")) {
+    heading("extraction_precision");
+    report(loaded.problems);
+    return 1;
+  }
+  const labels = loaded.values;
 
   const precondition = extractorAvailable();
   if (!precondition.met) {
@@ -290,14 +397,44 @@ async function extraction(): Promise<number> {
         (total, set) =>
           total +
           set.sections.reduce(
-            (n, section) =>
-              n +
-              section.expect.map((_, i) => expectedAtomId(section, i)).length,
+            (n, section) => n + (expectations(section)?.length ?? 0),
             0,
           ),
         0,
       )} atoms`,
     );
+    return 0;
+  }
+
+  // A recall denominator is only as complete as the labelling behind it. A set
+  // with sections still marked unread would silently contribute a smaller
+  // denominator than the document deserves, and the run file that came out of
+  // it would carry no trace of why. Loud skip rather than failure: an
+  // unfinished labelling pass is a fact about the corpus, not a regression in
+  // the extractor, and docs/12-evaluation.md leaves how much is enough to the
+  // team's time-box rather than to a threshold in here.
+  const outstanding = labels
+    .map((set) => ({ set, unread: unreadSections(set) }))
+    .filter((row) => row.unread.length > 0);
+  if (outstanding.length > 0) {
+    heading("extraction_precision");
+    skipped(
+      "extraction_precision",
+      "the labelling pass is unfinished — sections are still marked unread",
+    );
+    line();
+    line(
+      "  Recall is measured against what a human wrote blind, so a set with",
+    );
+    line(
+      "  unread sections would be scored over a denominator that is missing",
+    );
+    line("  exactly the sections nobody has read. What remains:");
+    for (const row of outstanding) {
+      line(
+        `    ${labelFileName(row.set.document, row.set.labeller).padEnd(40)} ${row.unread.length} of ${row.set.sections.length} unread`,
+      );
+    }
     return 0;
   }
 
@@ -399,7 +536,12 @@ async function retrieval(runPath: string | undefined): Promise<number> {
   const name = "retrieval_precision_under_budget" as const;
   heading(name);
 
-  const querySets = loadQuerySets(ROOT);
+  const loadedQueries = loadQuerySets(ROOT);
+  if (loadedQueries.problems.some((p) => p.level === "error")) {
+    report(loadedQueries.problems);
+    return 1;
+  }
+  const querySets = loadedQueries.values;
   if (querySets.length === 0) {
     skipped(
       name,
@@ -438,7 +580,12 @@ async function retrieval(runPath: string | undefined): Promise<number> {
   }
 
   const corpus = loadCorpus(ROOT);
-  const labels = loadLabels(ROOT);
+  const loadedLabels = loadLabels(ROOT);
+  if (loadedLabels.problems.some((p) => p.level === "error")) {
+    report(loadedLabels.problems);
+    return 1;
+  }
+  const labels = loadedLabels.values;
   const url = evalDatabaseUrl();
   const ports = resolvePorts().ports;
   const version = currentExtractorVersion();
@@ -498,15 +645,21 @@ async function retrieval(runPath: string | undefined): Promise<number> {
   const score = scoreRetrieval(result.records);
   const printCurve = (rows: BudgetScore[]): void => {
     for (const row of rows) {
-      const precision =
-        row.precision === null ? "n/a  " : row.precision.toFixed(3);
+      const precision = formatProportion({
+        rate: row.precision,
+        interval: row.precisionInterval,
+      });
       line(
         `    ${String(row.budgetTokens).padStart(6)}  precision ${precision}  delivered ${row.delivered}  displaced ${row.displacement}  used(max) ${row.budgetTokensUsedMax}`,
       );
     }
   };
   line();
-  line("  precision under budget (pooled):");
+  line(
+    "  precision under budget (pooled). The interval is Wilson at 95% over the",
+  );
+  line("  delivered count on the same row; atoms within one pack are not");
+  line("  independent, so it is a floor on the width, never an overstatement.");
   printCurve(score.budgets);
   if (score.paraphrased.length > 0) {
     line("  paraphrased slice:");
@@ -591,8 +744,13 @@ function reconciliation(findingsPath: string | undefined): number {
   const name = "reconciliation_false_positive_rate" as const;
   heading(name);
 
-  const editCorpus = loadEditCorpus(ROOT);
-  if (editCorpus === null) {
+  const loadedEdits = loadEditCorpus(ROOT);
+  if (loadedEdits.problems.some((p) => p.level === "error")) {
+    report(loadedEdits.problems);
+    return 1;
+  }
+  const editCorpus = loadedEdits.values[0];
+  if (editCorpus === undefined) {
     skipped(
       name,
       "no corpus of edits exists. A human constructs eval/corpus/edits.json " +
@@ -605,7 +763,12 @@ function reconciliation(findingsPath: string | undefined): number {
     return 0;
   }
 
-  const labelSets = loadEditLabels(ROOT);
+  const loadedVerdicts = loadEditLabels(ROOT);
+  if (loadedVerdicts.problems.some((p) => p.level === "error")) {
+    report(loadedVerdicts.problems);
+    return 1;
+  }
+  const labelSets = loadedVerdicts.values;
   if (labelSets.length === 0) {
     skipped(
       name,
@@ -712,7 +875,7 @@ function reconciliation(findingsPath: string | undefined): number {
   // Beside the headline, never optimised: the degenerate optimum of a kill
   // metric is silence, and a reconciler that emits nothing scores zero.
   line(
-    `  misses         ${score.misses} (rate ${score.missRate === null ? "n/a" : score.missRate.toFixed(3)})`,
+    `  misses         ${score.misses} (rate ${formatProportion({ rate: score.missRate, interval: score.missInterval })})`,
   );
 
   const run = {

@@ -144,16 +144,58 @@ export async function claimExtraction(
     : { kind: "held" };
 }
 
+/**
+ * Whether a terminal write still owned the run it was recording.
+ *
+ * `claim-lost` is not an error and not a failure of the extraction. It is the
+ * ordinary outcome of finishing a run that a successor has already taken over,
+ * and the only correct response to it is to discard the work — never to stamp
+ * it over the successor's row.
+ */
+export type TerminalWrite = "recorded" | "claim-lost";
+
+/**
+ * The fence both terminal writes carry: this row, at the attempt we claimed.
+ *
+ * The row id alone is not ownership. `claimExtraction` reuses the row — the
+ * unique key on `(section_id, extractor_version)` leaves it no alternative — so
+ * a successor's run is the *same* id, and a write fenced on the id alone lands
+ * on the successor's run as happily as on its own.
+ *
+ * `attempts` is the token — the value `claimExtraction` handed this run — and
+ * not the tempting `status = 'running' and lease_expires_at > now()`, which
+ * needs no plumbing and is wrong in both directions:
+ *
+ * - It **permits** the write it was proposed to stop. A successor's claim
+ *   leaves the row `running` with a fresh lease, so the predicate is at its
+ *   truest precisely when a loser is about to overwrite a live claim.
+ * - It **refuses** a write that harms nobody: a worker that finished just after
+ *   its own lease lapsed with no successor having appeared. That discards a
+ *   completed extraction — a model call already paid for, every atom it
+ *   produced, and the record that the section was ever extracted — to defend
+ *   against a writer that does not exist. Silently throwing away good work is
+ *   its own harm.
+ *
+ * `attempts` moves when, and only when, a takeover actually happens. It refuses
+ * the write that would land on somebody else's run and accepts the write that
+ * would land on nothing. The lease says when a row *may* be taken; the counter
+ * says whether it *was*, and only the second question is ownership.
+ */
+const owns = (id: string, attempts: number) =>
+  sql`id = ${id}::uuid and attempts = ${attempts}`;
+
 export async function succeedExtraction(
   db: Db,
   input: {
     id: string;
+    /** The value `claimExtraction` returned for this run. */
+    attempts: number;
     candidatesTotal: number;
     candidatesDropped: number;
     candidatesTruncated: boolean;
   },
-): Promise<void> {
-  await db.execute(sql`
+): Promise<TerminalWrite> {
+  const stamped = await db.execute<{ id: string }>(sql`
     update section_extractions
        set status = 'succeeded',
            finished_at = now(),
@@ -162,23 +204,34 @@ export async function succeedExtraction(
            candidates_total = ${input.candidatesTotal},
            candidates_dropped = ${input.candidatesDropped},
            candidates_truncated = ${input.candidatesTruncated}
-     where id = ${input.id}::uuid
+     where ${owns(input.id, input.attempts)}
+    returning id
   `);
+  return stamped.rows.length === 1 ? "recorded" : "claim-lost";
 }
 
 export async function failExtraction(
   db: Db,
   id: string,
+  /** The value `claimExtraction` returned for this run. */
+  attempts: number,
   error: string,
-): Promise<void> {
-  await db.execute(sql`
+): Promise<TerminalWrite> {
+  // Fenced for the same reason as the success. An unfenced failure is the worse
+  // of the two: `failed` matches the takeover condition in `claimExtraction`, so
+  // stamping it on a row a live worker still holds invites a third worker to
+  // claim it — two extractors on one section at one version, both writing atoms,
+  // and nothing downstream that would recognise them as the same run.
+  const stamped = await db.execute<{ id: string }>(sql`
     update section_extractions
        set status = 'failed',
            finished_at = now(),
            lease_expires_at = null,
            error = ${error}
-     where id = ${id}::uuid
+     where ${owns(id, attempts)}
+    returning id
   `);
+  return stamped.rows.length === 1 ? "recorded" : "claim-lost";
 }
 
 export type NearestAtom = {

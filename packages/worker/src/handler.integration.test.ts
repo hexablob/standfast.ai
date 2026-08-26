@@ -1,7 +1,9 @@
 import type { EgressEntry } from "@standfast/core";
 import {
+  claimExtraction,
   createProject,
   currentExtractorVersion,
+  loadSectionForExtraction,
   putDocument,
   type SectionExtractJob,
   withActor,
@@ -24,7 +26,7 @@ import {
   ScriptedJudge,
 } from "./fakes.js";
 import { makeSectionExtractHandler } from "./handler.js";
-import type { Verdict } from "./ports.js";
+import type { Extractor, Verdict } from "./ports.js";
 
 const EV = currentExtractorVersion();
 const NEVER_ABORTED = new AbortController().signal;
@@ -131,6 +133,67 @@ async function extractionRow(sectionId: string) {
   );
   return r.rows[0];
 }
+
+/** Ages a lease out, the way a worker whose process died leaves it behind. */
+async function expireLease(sectionId: string): Promise<void> {
+  await admin.query(
+    `update section_extractions
+        set lease_expires_at = now() - interval '1 minute'
+      where section_id = $1 and extractor_version = $2`,
+    [sectionId, EV],
+  );
+}
+
+/**
+ * A second worker taking the run over, through the same function a real one
+ * would.
+ *
+ * Not a hand-written UPDATE: what a takeover does to `attempts` is the thing
+ * the fence is built on, so a test that moved the counter itself would only be
+ * agreeing with its own fixture. pg-boss supervision is what makes this
+ * routine rather than theoretical — it returns a job stranded `active` by a
+ * dead worker to the queue, and the next worker to be handed it finds a lease
+ * it is entitled to take.
+ */
+async function takeOver(sectionId: string): Promise<void> {
+  await expireLease(sectionId);
+  const outcome = await withActor(data.orgA, data.humanA, async (db) => {
+    const section = await loadSectionForExtraction(db, sectionId);
+    return claimExtraction(db, {
+      orgId: data.orgA,
+      projectId,
+      sectionId,
+      sectionHash: section?.sectionHash ?? "",
+      extractorVersion: EV,
+      leaseSeconds: 900,
+    });
+  });
+  if (outcome.kind !== "claimed") {
+    throw new Error(`the successor did not get the claim: ${outcome.kind}`);
+  }
+}
+
+/**
+ * An extractor that lets something happen to the row before it answers.
+ *
+ * The model call is where the staging belongs, because the model call is the
+ * whole of the window the lease exists to cover: it is the only stretch of a
+ * run with no transaction open and nothing holding the row.
+ */
+const interruptedExtractor = (
+  interrupt: () => Promise<void>,
+  thenThrow?: Error,
+): Extractor => ({
+  id: "test-interrupted-1",
+  egress: null,
+  maxInputChars: 100_000,
+  async extract(section, signal) {
+    const candidates = await new BulletExtractor().extract(section, signal);
+    await interrupt();
+    if (thenThrow) throw thenThrow;
+    return candidates;
+  },
+});
 
 describe("the section.extract handler", () => {
   it("writes a provisional atom per surviving candidate, with its embedding", async () => {
@@ -317,6 +380,87 @@ describe("the section.extract handler", () => {
     const row = await extractionRow((job as SectionExtractJob).sectionId);
     expect(row?.status).toBe("succeeded");
     expect(row?.attempts).toBe(2);
+  });
+
+  it("refuses to stamp success on a run a successor took over", async () => {
+    const [job] = await push("docs/stolen-success.md", DOC);
+    const sectionId = (job as SectionExtractJob).sectionId;
+    const handle = makeSectionExtractHandler({
+      ports: fakePorts({
+        extractor: interruptedExtractor(() => takeOver(sectionId)),
+      }),
+    });
+
+    const outcome = await handle(job as SectionExtractJob, NEVER_ABORTED);
+
+    // The loss is the outcome, and it is not an extraction. Reported as one, the
+    // row would say `succeeded` at a hash the successor has already moved past,
+    // and `claimExtraction` would answer `already-succeeded` to every future
+    // delivery — the section never re-extracted, and nothing anywhere saying so.
+    expect(outcome.status).toBe("skipped");
+    expect(outcome.reason).toBe("claim lost");
+
+    const row = await extractionRow(sectionId);
+    expect(row?.status).toBe("running");
+    expect(row?.attempts).toBe(2);
+    expect(row?.lease_expires_at).not.toBeNull();
+
+    // The atoms went down with the stamp. They share its transaction precisely
+    // so that a run which lost the right to finish cannot leave its output
+    // behind for the successor to duplicate.
+    expect(await atomsIn(sectionId)).toHaveLength(0);
+  });
+
+  it("refuses to stamp failure on a run a successor took over", async () => {
+    const [job] = await push("docs/stolen-failure.md", DOC);
+    const sectionId = (job as SectionExtractJob).sectionId;
+    const handle = makeSectionExtractHandler({
+      ports: fakePorts({
+        extractor: interruptedExtractor(
+          () => takeOver(sectionId),
+          new Error("upstream said 503"),
+        ),
+      }),
+    });
+
+    // The port really did fail, so the job really did fail; what this run may
+    // not do is say so on somebody else's row.
+    await expect(
+      handle(job as SectionExtractJob, NEVER_ABORTED),
+    ).rejects.toThrow(/extract: upstream said 503/);
+
+    const row = await extractionRow(sectionId);
+    // `failed` is exactly what the takeover condition looks for, so writing it
+    // onto a live claim would put a third worker on a section a second one is
+    // still extracting — two runs at one extractor version, both writing atoms.
+    expect(row?.status).toBe("running");
+    expect(row?.attempts).toBe(2);
+    expect(row?.error).toBeNull();
+    expect(row?.lease_expires_at).not.toBeNull();
+  });
+
+  it("records a run that outlived its lease with nobody waiting for it", async () => {
+    const [job] = await push("docs/late-uncontested.md", DOC);
+    const sectionId = (job as SectionExtractJob).sectionId;
+    const handle = makeSectionExtractHandler({
+      ports: fakePorts({
+        extractor: interruptedExtractor(() => expireLease(sectionId)),
+      }),
+    });
+
+    const outcome = await handle(job as SectionExtractJob, NEVER_ABORTED);
+
+    // The positive control, and the reason the fence is `attempts` rather than
+    // the lease. Nobody took this row over, so there is nothing the write could
+    // overwrite; a lease predicate would refuse it anyway and throw away a model
+    // call already paid for, every atom it produced, and the record that the
+    // section was ever extracted.
+    expect(outcome.status).toBe("extracted");
+
+    const row = await extractionRow(sectionId);
+    expect(row?.status).toBe("succeeded");
+    expect(row?.attempts).toBe(1);
+    expect(await atomsIn(sectionId)).toHaveLength(2);
   });
 
   it("records a failure with its stage, and no document prose", async () => {

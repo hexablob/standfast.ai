@@ -8,6 +8,8 @@
  * on its own.
  */
 
+import { type Interval, proportion } from "./interval.js";
+
 export type PackRecord = {
   readonly queryId: string;
   readonly paraphrased: boolean;
@@ -37,6 +39,13 @@ export type BudgetScore = {
   readonly governingDelivered: number;
   /** Pooled: governing atoms delivered / atoms delivered. Null when nothing was. */
   readonly precision: number | null;
+  /**
+   * Wilson 95% interval on `precision`. Its n is `delivered` — the atoms in the
+   * packs, not the queries — because precision is a proportion of delivered
+   * atoms. The atoms of one query are not independent draws, so this is the
+   * narrowest the band can honestly be, never wider than the truth.
+   */
+  readonly precisionInterval: Interval | null;
   /** Governing atoms that existed and were not in the pack — the recall side. */
   readonly displacement: number;
   readonly budgetTokensUsedMax: number;
@@ -75,12 +84,14 @@ function scoreSlice(records: readonly PackRecord[]): BudgetScore[] {
         usedMax = Math.max(usedMax, record.budgetTokensUsed);
       }
 
+      const scored = proportion(governingDelivered, delivered);
       return {
         budgetTokens: budget,
         queries: bucket.length,
         delivered,
         governingDelivered,
-        precision: delivered === 0 ? null : governingDelivered / delivered,
+        precision: scored.rate,
+        precisionInterval: scored.interval,
         displacement,
         budgetTokensUsedMax: usedMax,
       };

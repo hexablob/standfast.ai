@@ -139,6 +139,17 @@ describe("authentication", () => {
     expect((await call("/v1/projects", "sf_sk_nope")).status).toBe(401);
   });
 
+  // RFC 7235 §2.1: the scheme is case-insensitive. A client that sends
+  // `bearer` holds a correct credential, and refusing it would also count the
+  // refusal against its address, so the caller would eventually be throttled
+  // for a difference in capitalisation.
+  it("accepts a valid key under a lower-case scheme", async () => {
+    const res = await call("/v1/projects", null, {
+      headers: { authorization: `bearer ${humanKey}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
   // Revocation is enforced by the policy behind auth.resolve_api_key, not by
   // application code that could later be reordered.
   it("rejects a revoked key", async () => {

@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import type { Corpus, Problem } from "./corpus.js";
+import { type Loaded, loadDirectory } from "./parse.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -65,26 +66,70 @@ export type LabelledQuery = z.infer<typeof LabelledQuery>;
 export type QuerySet = z.infer<typeof QuerySet>;
 
 /** Empty when `eval/queries/` does not exist or holds nothing — the skip case. */
-export function loadQuerySets(root: string): QuerySet[] {
-  const directory = join(root, "queries");
-  if (!existsSync(directory)) {
-    return [];
-  }
+export function loadQuerySets(root: string): Loaded<QuerySet> {
+  return loadDirectory(
+    join(root, "queries"),
+    () => true,
+    QuerySet,
+    (name) => `queries/${name}`,
+  );
+}
 
-  return readdirSync(directory)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((name) => {
-      const parsed = QuerySet.safeParse(
-        JSON.parse(readFileSync(join(directory, name), "utf8")),
-      );
-      if (!parsed.success) {
-        throw new Error(
-          `queries/${name} is not a valid query set:\n${parsed.error.message}`,
-        );
+/**
+ * What `check` can say about a query set before a run exists.
+ *
+ * Every expected atom id names a section by hash. A hash that is in no corpus
+ * document is a query written against a document that has since moved, and it
+ * will silently deflate retrieval precision — the same class of error the
+ * orphaned-section check already catches for section labels, and worth catching
+ * in the same session rather than at the end of a run.
+ */
+export function checkQuerySets(
+  corpus: Corpus,
+  sets: readonly QuerySet[],
+): Problem[] {
+  const known = new Set(
+    corpus.documents.flatMap((d) => d.sections.map((s) => s.sectionHash)),
+  );
+  const problems: Problem[] = [];
+  for (const set of sets) {
+    const seen = new Set<string>();
+    for (const query of set.queries) {
+      if (seen.has(query.id)) {
+        problems.push({
+          level: "error",
+          message: `queries (${set.labeller}): query id '${query.id}' is used twice`,
+        });
       }
-      return parsed.data;
-    });
+      seen.add(query.id);
+
+      for (const atomId of query.governs) {
+        const hash = atomId.split("#")[0] as string;
+        if (!known.has(hash)) {
+          problems.push({
+            level: "error",
+            message:
+              `queries (${set.labeller}): query '${query.id}' expects atom ` +
+              `${atomId}, whose section is in no corpus document — the ` +
+              "document moved and the query needs re-pointing",
+          });
+        }
+      }
+    }
+    if (!set.blind) {
+      problems.push({
+        level: "warning",
+        message: `queries (${set.labeller}): not blind-first — any run using it is contaminated`,
+      });
+    }
+    if (set.modelAssisted) {
+      problems.push({
+        level: "warning",
+        message: `queries (${set.labeller}): model-assisted — any run using it is marked as such`,
+      });
+    }
+  }
+  return problems;
 }
 
 const Model = z.object({ name: z.string().min(1), version: z.string().min(1) });

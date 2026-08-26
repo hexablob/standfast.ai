@@ -1,4 +1,5 @@
 import type { AtomKind } from "../labels.js";
+import { type Proportion, proportion } from "./interval.js";
 
 /**
  * Why a labeller refused an emitted atom. Counted separately because they have
@@ -51,15 +52,25 @@ export type ExtractionScore = {
   emitted: number;
   accepted: number;
   /** accepted / emitted. Null when nothing was emitted — not 1, and not 0. */
-  precision: number | null;
+  /**
+   * accepted / emitted, with its 95% interval. The trials are the emitted
+   * atoms, so `emitted` is the n the interval is computed over — a session that
+   * emitted eleven atoms reports a band wide enough to say so.
+   */
+  precision: Proportion;
   rejections: Record<Rejection, number>;
-  miscategorised: { count: number; rate: number | null };
+  /**
+   * The denominator here is `accepted`, not `emitted`: a miscategorisation is a
+   * property of an atom that got in, and an atom rejected for being unsupported
+   * has no kind worth grading. Its own n, so its own interval.
+   */
+  miscategorised: { count: number } & Proportion;
   /**
    * Measured and reported, never the bar. A missed atom leaves the user where
    * they started; a wrong atom gets ratified by a tired human and is then
    * injected into every future session as a directive.
    */
-  recall: { expected: number; matched: number; rate: number | null };
+  recall: { expected: number; matched: number } & Proportion;
   /**
    * `unsupported` is a gate, not a score. If the extractor emitted a statement
    * its own quote does not support, phase 1's exit criterion 1 is false and no
@@ -67,10 +78,6 @@ export type ExtractionScore = {
    */
   gate: { unsupported: number; passed: boolean };
 };
-
-function ratio(numerator: number, denominator: number): number | null {
-  return denominator === 0 ? null : numerator / denominator;
-}
 
 /**
  * Scores one slice of adjudicated atoms against the expected atoms of the
@@ -124,16 +131,18 @@ export function scoreExtraction(
   return {
     emitted: atoms.length,
     accepted,
-    precision: ratio(accepted, atoms.length),
+    precision: proportion(accepted, atoms.length),
     rejections,
     miscategorised: {
       count: miscategorised,
-      rate: ratio(miscategorised, accepted),
+      ...proportion(miscategorised, accepted),
     },
     recall: {
       expected: expected.size,
       matched: matched.size,
-      rate: ratio(matched.size, expected.size),
+      // The denominator is what a human wrote blind, so an interval here is a
+      // statement about how much labelling was done, not about the extractor.
+      ...proportion(matched.size, expected.size),
     },
     gate: {
       unsupported: rejections.unsupported,

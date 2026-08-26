@@ -57,18 +57,21 @@ vi.mock("./labels.js", async (importOriginal) => ({
   // The real module keeps ATOM_KINDS and the pure helpers, which edits.ts and
   // run.ts import; only the disk readers are canned.
   ...(await importOriginal<typeof import("./labels.js")>()),
-  loadLabels: () => [
-    {
-      version: 1,
-      document: "public/fixture",
-      documentHash: "b".repeat(64),
-      labeller: "fixture",
-      labelledOn: "2026-01-01",
-      blind: true,
-      modelAssisted: false,
-      sections: [],
-    },
-  ],
+  loadLabels: () => ({
+    values: [
+      {
+        version: 1,
+        document: "public/fixture",
+        documentHash: "b".repeat(64),
+        labeller: "fixture",
+        labelledOn: "2026-01-01",
+        blind: true,
+        modelAssisted: false,
+        sections: [],
+      },
+    ],
+    problems: [],
+  }),
   checkLabels: () => [],
   coverage: () => [],
 }));

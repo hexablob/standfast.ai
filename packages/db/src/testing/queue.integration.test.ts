@@ -1,8 +1,16 @@
 import { createRequire } from "node:module";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Client } from "pg";
 import { PgBoss } from "pg-boss";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { QUEUE_SCHEMA, SECTION_EXTRACT_QUEUE } from "../queue.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { closePool } from "../client.js";
+import {
+  getBoss,
+  QUEUE_SCHEMA,
+  SECTION_EXTRACT_QUEUE,
+  stopBoss,
+  superviseQueue,
+} from "../queue.js";
 import { installQueue } from "../queue-install.js";
 import { adminClient, adminUrl, appClient, ensureTestRole } from "./harness.js";
 
@@ -124,5 +132,103 @@ describe("the queue schema", () => {
           and table_name in ('job', 'queue', 'version', 'schedule', 'subscription')`,
     );
     expect(inPublic.rows).toEqual([]);
+  });
+});
+
+describe("a job whose worker died mid-execution", () => {
+  /**
+   * Reads a job's state straight out of pg-boss's table. Nothing in the client
+   * API distinguishes "still leased by a process that no longer exists" from
+   * "being worked on", which is the whole difficulty.
+   */
+  async function stateOf(id: string): Promise<string | undefined> {
+    const { rows } = await admin.query<{ state: string }>(
+      `select state from "${QUEUE_SCHEMA}"."job" where id = $1`,
+      [id],
+    );
+    return rows[0]?.state;
+  }
+
+  it("stays active until something supervises the queue", async () => {
+    const id = await boss.send(
+      SECTION_EXTRACT_QUEUE,
+      { sectionId: "stranded" },
+      // The shortest lease pg-boss allows. In production this is 900s, which is
+      // why the failure below takes a quarter of an hour to become visible and
+      // is easy to mistake for a slow model call.
+      { expireInSeconds: 1 },
+    );
+    if (!id) throw new Error("send returned no job id");
+
+    // Leased and then abandoned: the shape a killed process leaves behind. No
+    // handler ever throws here, so `retryLimit` is never consulted — this is
+    // exactly the case retries do not cover. The batch is wide enough to take
+    // whatever earlier tests left queued; only this job has a lease short
+    // enough to expire during the test.
+    await boss.fetch(SECTION_EXTRACT_QUEUE, { batchSize: 50 });
+    expect(await stateOf(id)).toBe("active");
+
+    // Not a guess at how long recovery takes: it is the lease elapsing. Past
+    // this point the job is over its deadline and nothing is coming for it,
+    // because `boss` is a sender and runs no maintenance.
+    await delay(1_500);
+    expect(await stateOf(id)).toBe("active");
+
+    const supervisor = new PgBoss({
+      connectionString: adminUrl(),
+      schema: QUEUE_SCHEMA,
+      migrate: false,
+      createSchema: false,
+      useListenNotify: false,
+      schedule: false,
+      // What `superviseQueue()` turns on in the worker. The two intervals are
+      // squeezed only so the test finishes in seconds; both default to 60.
+      supervise: true,
+      superviseIntervalSeconds: 1,
+      monitorIntervalSeconds: 1,
+      queueCacheIntervalSeconds: 1,
+    });
+    await supervisor.start();
+
+    try {
+      await expect
+        .poll(() => stateOf(id), { timeout: 30_000, interval: 250 })
+        .not.toBe("active");
+    } finally {
+      await supervisor.stop({ graceful: true });
+    }
+  }, 60_000);
+});
+
+describe("the process-wide queue handle", () => {
+  afterAll(async () => {
+    await stopBoss();
+    await closePool();
+  });
+
+  it("refuses a role declared after the queue is already open", async () => {
+    await getBoss();
+
+    // Loudly, because the handle is memoised: the options are fixed at
+    // construction, so a later caller getting its way silently is the one
+    // outcome that must not be possible.
+    expect(() => superviseQueue()).toThrow(/before the queue is opened/);
+  });
+
+  it("handles the error event that would otherwise terminate the process", async () => {
+    const instance = await getBoss();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      // An EventEmitter rethrows an `error` with no listener, so this call not
+      // throwing is the assertion — and in a worker that throw would be death
+      // mid-job, which strands the very job supervision exists to recover.
+      expect(() =>
+        instance.emit("error", new Error("background failure")),
+      ).not.toThrow();
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
