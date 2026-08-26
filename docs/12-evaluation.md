@@ -697,9 +697,61 @@ network path to anything of ours.
 | `pnpm eval extraction` | the extractor over the corpus |
 | `pnpm eval retrieval <scored-run>` | the labelled queries at each committed budget, over atoms a human accepted |
 | `pnpm eval reconciliation <findings>` | a checking session's findings against the labelled edit corpus |
+| `pnpm eval latency` | the `context` tool over a synthetic corpus, timed |
 
 Exit codes: `0` success, including a loud skip; `1` a failure or a regression;
 `2` a usage error.
+
+### `latency`, the one slice that reports without judging
+
+Every other command above compares a number to a bar. This one cannot, and the
+distinction is worth stating rather than leaving for someone to discover in the
+source.
+
+`docs/06-retrieval.md` settles the shape of the p95 latency contract and
+`docs/14-roadmap.md` owns its value, which is still unchosen — deliberately, on
+the grounds that "a contract set to whatever the implementation happened to
+achieve is not a contract". So `pnpm eval latency` measures and reports. It
+writes no metric into `baselines.json` — that file has four metrics and no
+latency metric, which is correct and should stay that way — it has no threshold
+anywhere in it, and it cannot fail a run for being slow. Its only non-zero exit
+is operational. Every report and every run file it writes carries the sentence
+saying so, so a number cannot travel without its caveat.
+
+Three things make it unlike the others:
+
+- **It needs volume, not labels.** A percentile is a property of how much data
+  the planner walks, and no human has to read an atom for that to be true. It
+  seeds a synthetic corpus at a scale given by `STANDFAST_EVAL_LATENCY_ATOMS`
+  (default 2000 canonical atoms) with random unit-vector embeddings — realistic
+  for timing, meaningless for recall, and therefore never a source of an
+  accuracy claim. This is why the measurement is not blocked on the labelling
+  session that blocks the other three.
+- **It measures from the MCP tool call**, which is where `docs/06-retrieval.md`
+  says the contract is measured, "because the tool call is what the user
+  experiences". A real MCP client on an in-memory transport, the real server,
+  the typed SDK client, the real Hono route, `buildContext`, the one fused SQL
+  statement and assembly in `core`. It reports the route on its own beside the
+  full chain, so the MCP layer's own cost is visible rather than assumed.
+- **It reports a distribution, never a mean** — n, min, p50, p90, p95, p99, max
+  — on the same instinct as decision latency above. Percentiles are
+  nearest-rank, so every figure is a request that happened. A warm-up
+  (`STANDFAST_EVAL_LATENCY_WARMUP`, default 20 of
+  `STANDFAST_EVAL_LATENCY_ITERATIONS`, default 200) is run and discarded,
+  because JIT warm-up and first-connection cost are not what the contract is
+  about.
+
+It names its bound providers in every report. With no `STANDFAST_EGRESS_ALLOWLIST`
+entry for `query-embedding` the read path binds no query embedder at all — not
+a fake one — so generator 1 does not run and neither a provider round trip nor
+the HNSW traversal is in the figures. The report says loudly that such a run is
+a **floor, not a forecast**, on the same principle as `extractorAvailable`: a
+number measured without the expensive part must never be presented as the
+number a real deployment would see.
+
+Like the other database-backed runners it reads `STANDFAST_EVAL_DATABASE_URL`
+and never `DATABASE_URL`, skips loudly and exits `0` when that is unset, and
+writes its run to `eval/runs/`.
 
 The existing suite sets the precedent for degrading cleanly, and the harness
 follows it exactly. `vitest.config.ts` excludes `*.integration.test.ts` unless
@@ -708,6 +760,7 @@ follows it exactly. `vitest.config.ts` excludes `*.integration.test.ts` unless
 | Missing | Behaviour |
 | --- | --- |
 | `DATABASE_URL` | deterministic slices run; retrieval slices skip, loudly |
+| `STANDFAST_EVAL_DATABASE_URL` | the latency slice skips, loudly |
 | model credentials | extraction and reconciliation slices skip, loudly |
 | nothing | the full run |
 

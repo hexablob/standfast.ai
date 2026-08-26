@@ -38,12 +38,21 @@ importers:
 
   eval:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@4.4.3)
+      '@standfast/api':
+        specifier: workspace:*
+        version: link:../packages/api
       '@standfast/core':
         specifier: workspace:*
         version: link:../packages/core
       '@standfast/db':
         specifier: workspace:*
         version: link:../packages/db
+      '@standfast/mcp':
+        specifier: workspace:*
+        version: link:../packages/mcp
       '@standfast/worker':
         specifier: workspace:*
         version: link:../packages/worker

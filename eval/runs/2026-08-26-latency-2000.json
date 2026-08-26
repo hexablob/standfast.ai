@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "metric": "context_latency",
+  "ranOn": "2026-08-26",
+  "codeRevision": "1824bfc",
+  "scale": {
+    "atoms": 2000,
+    "documents": 42,
+    "sectionsPerDocument": 12,
+    "atomsPerSection": 4,
+    "embeddings": "random-unit-vectors"
+  },
+  "sampling": {
+    "iterations": 200,
+    "warmup": 20,
+    "percentileDefinition": "nearest-rank"
+  },
+  "providers": {
+    "queryEmbedding": "unbound — no STANDFAST_EGRESS_ALLOWLIST entry for query-embedding",
+    "reranker": "unbound — no provider has passed the acceptance test",
+    "realProvidersBound": false
+  },
+  "skippedStages": [
+    "dense",
+    "reranker"
+  ],
+  "pack": {
+    "itemsInLastPack": 33,
+    "candidatesInLastPack": 50
+  },
+  "milliseconds": {
+    "tool": {
+      "n": 180,
+      "min": 85.62462500000038,
+      "p50": 91.61666599999808,
+      "p90": 147.63933299999917,
+      "p95": 151.3700420000023,
+      "p99": 160.48837499999354,
+      "max": 179.62120800000412
+    },
+    "route": {
+      "n": 180,
+      "min": 85.21637499999997,
+      "p50": 91.13283299999966,
+      "p90": 147.4955409999966,
+      "p95": 150.50554099999863,
+      "p99": 154.6668340000033,
+      "max": 156.6418330000015
+    }
+  },
+  "notAContract": "This is a measurement, not a contract. The p95 latency contract for `context` is Open and owned by docs/14-roadmap.md, which states that it cannot be measured first and declared after — a contract set to whatever the implementation happened to achieve is not a contract. No number in this file may be adopted as that value, and no bar is recorded in eval/baselines.json."
+}

@@ -173,3 +173,48 @@ describe("document body size", () => {
     expect(await response.json()).toEqual({ error: "Request body too large." });
   });
 });
+
+/**
+ * The ceiling on the one field that carries whatever a developer typed.
+ *
+ * `docs/13-threat-model.md` §5, *The `UserPromptSubmit` hook*: that hook uses
+ * the raw prompt as the retrieval query, so this cap is what stands between a
+ * pasted function and the query embedder. What matters is not the number — 4,000
+ * is an interface bound, and the document says so — but the *shape* of the
+ * refusal. A cap that truncated and forwarded would send the first 4,000
+ * characters of the paste; this one sends nothing. That is the property worth
+ * pinning, because nothing else in the codebase states it.
+ *
+ * Written against the wire rather than against the Zod object, so a change that
+ * kept the schema and moved the coercion elsewhere would still be caught. The
+ * literal lives in `packages/api/src/schemas.ts` and is not exported.
+ */
+const QUERY_MAX_CHARS = 4000;
+
+const postContext = (query: string) =>
+  call(`/v1/projects/${projectId}/context`, apiKey, {
+    method: "POST",
+    body: JSON.stringify({ scope: "task", query, budgetTokens: 400 }),
+  });
+
+describe("retrieval query size", () => {
+  it("accepts a query at exactly the cap", async () => {
+    const response = await postContext("x".repeat(QUERY_MAX_CHARS));
+    expect(response.status).toBe(200);
+  });
+
+  it("refuses one character over the cap rather than truncating it", async () => {
+    const response = await postContext("x".repeat(QUERY_MAX_CHARS + 1));
+    expect(response.status).toBe(400);
+  });
+
+  it("fails closed: the oversized query reaches no retrieval stage", async () => {
+    // The positive control is above — 4,000 characters returns a pack. A 400
+    // carries no envelope at all, so there is no `skipped`, no `total`, and
+    // nothing that could have been produced by embedding the prompt.
+    const response = await postContext("x".repeat(QUERY_MAX_CHARS + 1));
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["items"]).toBeUndefined();
+    expect(body["skipped"]).toBeUndefined();
+  });
+});

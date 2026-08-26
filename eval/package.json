@@ -17,8 +17,11 @@
     "eval": "tsc -b && node dist/bin.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@standfast/api": "workspace:*",
     "@standfast/core": "workspace:*",
     "@standfast/db": "workspace:*",
+    "@standfast/mcp": "workspace:*",
     "@standfast/worker": "workspace:*",
     "pg": "8.22.0",
     "zod": "4.4.3"

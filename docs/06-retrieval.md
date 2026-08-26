@@ -471,8 +471,25 @@ from the MCP tool call rather than from the SQL, because the tool call is what
 the user experiences. It is apportioned across the stages *before* the
 reranker is selected, per condition 4 above.
 
+The *instrument* now exists, though the contract still does not. `pnpm eval
+latency` drives the `context` tool over a synthetic corpus and reports the
+distribution — n, min, p50, p90, p95, p99, max, and no mean. It measures from
+exactly the point this section names: a real MCP client on an in-memory
+transport, through the typed SDK client and the Hono route into `buildContext`,
+with nothing on the path stubbed. It needs volume rather than labels, which is
+why it runs today while the three accuracy bars wait on a corpus a human has
+read.
+
+It deliberately sets no threshold, records nothing in `eval/baselines.json`,
+and cannot fail a run for being slow. Choosing the number stays where
+`docs/14-roadmap.md` put it, and for the reason it gives: a contract set to
+whatever the implementation happened to achieve is not a contract. A figure
+from that harness is evidence for the conversation, never its conclusion.
+
 No latency, accuracy or cost figure appears anywhere in this document, because
-none has been measured.
+none has been chosen. What the harness observes on a given machine, at a given
+scale, with a given set of providers bound, lives in its run file in
+`eval/runs/` where those three qualifiers travel with it.
 
 ## Tenancy, and the one place it interacts badly with ANN
 

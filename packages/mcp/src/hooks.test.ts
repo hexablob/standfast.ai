@@ -233,6 +233,54 @@ describe("runUserPromptSubmit", () => {
     expect("ok".length).toBeLessThan(MINIMUM_PROMPT_CHARS);
   });
 
+  /**
+   * The floor, asserted at the boundary rather than well inside it.
+   *
+   * `docs/13-threat-model.md` §5 analyses this hook as the one field that
+   * carries whatever a developer typed, which makes `MINIMUM_PROMPT_CHARS` the
+   * first of the two bounds on that path. The test above uses "ok" and would
+   * survive an off-by-one or a `<=` flipped to `<`; these two cases would not.
+   * A prompt below the floor must produce **no outbound call at all** — not an
+   * empty pack, not a dropped response, nothing on the wire.
+   */
+  it.each([
+    ["one character below the floor", MINIMUM_PROMPT_CHARS - 1, 0],
+    ["exactly at the floor", MINIMUM_PROMPT_CHARS, 1],
+  ])("sends %s", async (_name, length, expected) => {
+    const { client, calls } = stubClient(() => ({ data: PACK }));
+
+    await runUserPromptSubmit(client, PROJECT, "x".repeat(length));
+
+    expect(calls).toHaveLength(expected);
+  });
+
+  /**
+   * The ceiling, from the hook's side.
+   *
+   * `packages/api/src/limits.integration.test.ts` pins the refusal itself — the
+   * API answers 400 and does not truncate. What belongs here is the other half:
+   * that the refusal degrades like every other failure. The oversized prompt is
+   * still *offered* to the API, which is the honest shape of the boundary; the
+   * cap is enforced server-side, before any retrieval stage, not by the hook
+   * withholding it.
+   */
+  it("emits no context when the API refuses an oversized prompt", async () => {
+    const { client, calls } = stubClient(() => ({
+      error: { error: "Invalid request." },
+    }));
+
+    const outcome = await runUserPromptSubmit(
+      client,
+      PROJECT,
+      "x".repeat(4001),
+    );
+
+    expect(outcome.additionalContext).toBeNull();
+    expect(outcome.tokens).toBe(0);
+    // Offered once, refused once. The hook does not retry a rejected query.
+    expect(calls).toHaveLength(1);
+  });
+
   it.each([
     ["a transport error", () => Promise.reject(new Error("timeout"))],
     // Same 404 body as the other two hooks' tables: an unknown or cross-org

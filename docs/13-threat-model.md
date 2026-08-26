@@ -471,14 +471,23 @@ counter-example converts a founding invariant into marketing.
 
 **There is no representation of source code to leak.** No contents, no AST, no
 call graph, no file tree — excluded, not deferred (`docs/14-roadmap.md`). No
-column in any of the thirteen tables can hold one.
+column in any tenant table can hold one.
 
-**`packages/db/src/schema/wire-allowlist.ts` names the exact column set** of
-every table whose rows cross the wire, and
+**`packages/db/src/schema/wire-allowlist.ts` names the exact column set of
+every tenant table, reviewed one column at a time.** It is not a list of what
+serialises: several allowlisted tables — `api_keys`, `atom_suppressions`,
+`section_extractions`, `egress_events` — never leave the database at all, and
+`atoms.embedding` is listed on a table that does serialise but is itself
+withheld by `AtomSchema`. **Listing is the review record, not the permission.**
+The guarantee is completeness, not disclosure: every table in the live schema
+must be classified as tenant data or not, and
 `packages/db/src/testing/schema-guards.integration.test.ts` reads
-`information_schema.columns` and asserts **equality**, not containment. Adding
-a column fails the build until someone adds it to the allowlist too, in a diff
-a reviewer sees, with a commit message that has to justify it.
+`information_schema.columns` and fails, naming the table, when one is neither.
+Within a classified table it asserts **equality**, not containment, so adding a
+column fails the build until someone adds it to the allowlist too, in a diff a
+reviewer sees, with a commit message that has to justify it. The count of
+tables is deliberately not written down here — the test enforces it, and a
+tally in prose goes stale the first time a migration adds one.
 
 **Allowlist, never denylist** (`docs/02-principles.md`, 9). The two fail
 differently, and the difference is the whole argument. A denylist fails open:
@@ -506,6 +515,62 @@ collapsing them into "agents cannot write" would be a comfortable lie.
 directory** — `resolve`, then `relative`, then reject on `..`, on a leading
 separator, and on the empty string. That is the mirror-image problem, a hostile
 server writing outside the directory the customer named, and it is tested.
+
+### The `UserPromptSubmit` hook, which sends the developer's prompt
+
+Every other thing Standfast transmits is prose a human wrote into a governed
+document, or a path. Phase 2's second hook is the exception: it takes the
+developer's prompt verbatim and uses it as the retrieval query, which
+`packages/mcp/src/hooks.ts` states in its own comment — *the prompt is the
+query, so this one does reach the retrieval model call*. A developer who pastes
+a function into their prompt to ask about it has put that function into a
+retrieval query. Nothing in the headline claim prepares a reader for that, so it
+is analysed here rather than left to be discovered.
+
+**Where it actually goes.** The prompt reaches the local API as the `query`
+field of the same `context` call the `context` tool has always made. Generator 1
+— dense retrieval — is the only stage that would carry it further, and it cannot
+be reached today: `query-embedding` is deliberately absent from
+`PERMITTED_PURPOSES` in `packages/core/src/egress.ts`, so `parseEgressAllowlist`
+refuses such an entry and the process declines to start rather than binding one.
+The refusal names this exact reason — the read path sends a developer's live
+task description rather than stored prose, and that is a separate procurement
+decision with its own consent. **No deployment can turn this on by configuration
+alone.**
+
+If that purpose is ever admitted, the destination is still not open.
+`SelfHostedQueryEmbedder`'s constructor rejects any host outside `isLocal`
+(`packages/api/src/adapters/query-embedder.ts`), so the only endpoint it will
+speak to is a model on the operator's own network — condition 2 of
+`docs/06-retrieval.md`. `VoyageEmbedder` and the Anthropic adapters belong to
+the worker, bound to the `embedding` and `extraction` purposes over stored
+document prose; none of them is wired to the read path, and none of them could
+be reached by this one. **A deployment running its own embedding model sends
+nothing anywhere, and that is the only shape currently buildable.** This is
+opted-in egress an operator would have to configure deliberately, to a machine
+they run — not a third party, and not a default. It is also why *Hosted versus
+self-hosted* matters to this path in a way it does not to the others: no hosted
+deployment exists, so today the API that receives the prompt is the customer's
+own.
+
+**The floor.** `MINIMUM_PROMPT_CHARS` is 24 (`packages/mcp/src/hooks.ts`); a
+shorter prompt is dropped before any call is made at all. It was written against
+noise rather than against disclosure — "yes", "go on", "fix it" buy no context
+worth a round trip — but the effect is that the shortest prompts never enter the
+path.
+
+**The ceiling fails closed.** `ContextRequest` and `SearchRequest` cap `query`
+at 4,000 characters (`packages/api/src/schemas.ts`). A larger paste is refused
+with a typed `400`; it is **not truncated and forwarded**. The failure mode that
+would matter most — the developer who pastes a whole file — is therefore the one
+that sends nothing onward. The hook then behaves as it does for every other
+error: `fetchPack` returns the empty outcome with a diagnostic, the session
+proceeds without context, and the exit code stays 0 (`docs/09-agent-contract.md`).
+Worth being straight about that number's provenance: 4,000 is an interface
+bound, and appears in no design document as a privacy control. It fails closed
+by construction rather than by intent — a reason to pin the behaviour with a
+test, which `packages/mcp/src/hooks.test.ts` now does, rather than a reason to
+claim it as a control.
 
 ### The `PostToolUse` hook, which sends a path and nothing else
 
@@ -574,6 +639,22 @@ free text, and a cap is not a content check.
   `reconciliation_runs` and `reconciliation_findings` (migration `0009`) are
   named in `packages/db/src/schema/wire-allowlist.ts`, so this is a
   present-tense guarantee rather than a phase-3 promise.
+- **Whether the prompt-derived query needs a bound chosen for privacy.** The
+  4,000-character ceiling fails closed, but it was chosen as an interface bound
+  and a tighter one might be the right control. No number is proposed here.
+  Picking one before there is a corpus showing what real prompts contain would
+  be inventing a threshold and then defending it, which is the failure
+  `docs/02-principles.md` (10) names.
+- **Whether a redaction pass belongs on that field at all.** The tempting
+  version — strip anything that looks like code before embedding — is a pattern
+  list written from imagination, and it would fail in both directions: dropping
+  prose that mentions a symbol, passing a snippet that does not match the
+  patterns. It is recorded as an option, deliberately undesigned.
+- **Whether prompt-derived queries should require their own explicit opt-in**,
+  separate from admitting the `query-embedding` purpose. Today one act of
+  configuration would enable both the embedding call and the use of prompt text
+  in it. A developer might reasonably consent to the first and not the second,
+  and nothing currently lets them say so.
 
 ---
 
@@ -827,6 +908,13 @@ document
 - **Whether reranking runs in-region under our own control**, or whether a
   third-party reranker is acceptable and under what consent
   (`docs/06-retrieval.md`, condition 2).
+- **What consent the prompt-derived query needs**, and whether it should be
+  separate from admitting the `query-embedding` purpose — the same family of
+  question as the reranker above, and shipped without an answer. §5 carries the
+  three parts: a cap chosen for privacy rather than for the interface, whether a
+  redaction pass belongs there at all, and whether the use of prompt text
+  deserves its own opt-in. The path is shut today, since the purpose is refused
+  outright, which is why this is overdue rather than urgent.
 
 **Before phase 3 ships** — shipped without it, so this one is overdue
 

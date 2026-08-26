@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,22 @@ import {
   labelFileName,
   loadLabels,
 } from "./labels.js";
+import {
+  boundProviders,
+  DEFAULT_ATOMS,
+  DEFAULT_ITERATIONS,
+  DEFAULT_WARMUP,
+  LatencyRunFile,
+  NOT_A_CONTRACT,
+  runLatency,
+  scaleFor,
+} from "./latency.js";
 import { scoreExtraction } from "./metrics/extraction.js";
+import {
+  type Distribution,
+  distribution,
+  trimWarmup,
+} from "./metrics/latency.js";
 import {
   type EditExpectation,
   scoreReconciliation,
@@ -44,6 +60,7 @@ const USAGE = `pnpm eval <command>
   extraction                  run the extractor over the corpus
   retrieval <scored-run>      run the labelled queries at each committed budget
   reconciliation <findings>   score a checking session against the edit corpus
+  latency                     time the context tool over a synthetic corpus
 
 Everything deterministic runs everywhere. Anything that needs a model or a
 database skips loudly rather than reporting a pass it did not earn.
@@ -760,6 +777,180 @@ function reconciliation(findingsPath: string | undefined): number {
   return comparison.fails ? 1 : 0;
 }
 
+/** The commit, if git is cheaply reachable. "unknown" beats a thrown stack. */
+function gitRevision(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  return raw !== undefined && /^[1-9]\d*$/.test(raw) ? Number(raw) : fallback;
+}
+
+function nonNegativeInt(raw: string | undefined, fallback: number): number {
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : fallback;
+}
+
+function row(label: string, summary: Distribution): void {
+  const ms = (value: number) => `${value.toFixed(1)}`.padStart(8);
+  line(
+    `  ${label.padEnd(10)} n=${String(summary.n).padStart(4)}  min${ms(summary.min)}  p50${ms(summary.p50)}  p90${ms(summary.p90)}  p95${ms(summary.p95)}  p99${ms(summary.p99)}  max${ms(summary.max)}`,
+  );
+}
+
+/**
+ * Times `context` and reports the distribution. It compares against nothing.
+ *
+ * `docs/14-roadmap.md` owns the p95 contract and has not chosen its value, so
+ * this command has no failure mode that depends on how fast the run was. It
+ * returns 0 whether the p95 was two milliseconds or two seconds; the only
+ * non-zero exit is an operational one.
+ */
+async function latency(): Promise<number> {
+  const name = "context_latency" as const;
+  heading(name);
+
+  if (!process.env["STANDFAST_EVAL_DATABASE_URL"]) {
+    skipped(
+      name,
+      "STANDFAST_EVAL_DATABASE_URL is not set. This runner creates an org, a " +
+        "project and thousands of atoms, so like every other runner it " +
+        "populates its own database and deliberately has no path to " +
+        "DATABASE_URL. Point it at an empty, migrated database",
+    );
+    return 0;
+  }
+  // Still called, for its second refusal: an eval URL equal to the one
+  // something else serves from.
+  const url = evalDatabaseUrl();
+
+  const scale = scaleFor(
+    positiveInt(process.env["STANDFAST_EVAL_LATENCY_ATOMS"], DEFAULT_ATOMS),
+  );
+  const iterations = positiveInt(
+    process.env["STANDFAST_EVAL_LATENCY_ITERATIONS"],
+    DEFAULT_ITERATIONS,
+  );
+  const warmup = nonNegativeInt(
+    process.env["STANDFAST_EVAL_LATENCY_WARMUP"],
+    DEFAULT_WARMUP,
+  );
+
+  // The API connects as an unprivileged role so RLS is enforced exactly as it
+  // is in production; the same database, a different login.
+  const appUrl = new URL(url);
+  appUrl.username = "standfast_test";
+  appUrl.password = "standfast_test";
+
+  const providers = boundProviders();
+
+  line(
+    `  corpus     ${scale.atoms} canonical atoms in ${scale.documents} document(s),`,
+  );
+  line(
+    `             ${scale.sectionsPerDocument} section(s) each, random unit-vector embeddings`,
+  );
+  line(
+    `  sampling   ${iterations} iteration(s), first ${warmup} discarded as warm-up`,
+  );
+  line(`  embedding  ${providers.queryEmbedding}`);
+  line(`  reranker   ${providers.reranker}`);
+  line();
+  line("  seeding and measuring…");
+
+  const result = await runLatency({
+    databaseUrl: url,
+    appDatabaseUrl: appUrl.toString(),
+    scale,
+    iterations,
+    warmup,
+  });
+
+  const tool = distribution(trimWarmup(result.tool.samples, warmup));
+  const route = distribution(trimWarmup(result.route.samples, warmup));
+  if (!tool || !route) {
+    // Unreachable: trimWarmup throws before it can empty a sample.
+    failure("no samples survived the warm-up");
+    return 1;
+  }
+
+  heading("milliseconds, nearest-rank percentiles, no mean");
+  row("tool", tool);
+  row("route", route);
+  line(
+    `  the delta — tool p50 ${(tool.p50 - route.p50).toFixed(1)}ms, p95 ${(tool.p95 - route.p95).toFixed(1)}ms — is the`,
+  );
+  line("  MCP server, the typed client, the envelope and the transport.");
+  line();
+  line(
+    `  pack       ${result.packedAtoms} item(s) from ${result.totalCandidates} candidate(s)`,
+  );
+  line(
+    `  skipped    ${result.skippedStages.length > 0 ? result.skippedStages.join(", ") : "nothing"}`,
+  );
+  if (!providers.real) {
+    line();
+    warning(
+      "no real provider was bound. The query embedder is absent, so generator 1 " +
+        "never ran and neither a provider round trip nor the HNSW traversal is in " +
+        "these figures. This is a FLOOR, not a forecast, and it must not be " +
+        "presented as what a deployment with providers bound would see.",
+    );
+  }
+
+  const run = {
+    version: 1 as const,
+    metric: name,
+    ranOn: new Date().toISOString().slice(0, 10),
+    codeRevision: process.env["STANDFAST_EVAL_CODE_REVISION"] ?? gitRevision(),
+    scale: { ...scale, embeddings: "random-unit-vectors" as const },
+    sampling: {
+      iterations,
+      warmup,
+      percentileDefinition: "nearest-rank" as const,
+    },
+    providers: {
+      queryEmbedding: providers.queryEmbedding,
+      reranker: providers.reranker,
+      realProvidersBound: providers.real,
+    },
+    skippedStages: result.skippedStages,
+    pack: {
+      itemsInLastPack: result.packedAtoms,
+      candidatesInLastPack: result.totalCandidates,
+    },
+    milliseconds: { tool, route },
+    notAContract: NOT_A_CONTRACT,
+  };
+
+  const parsed = LatencyRunFile.safeParse(run);
+  if (!parsed.success) {
+    failure(
+      `the run this produced is not a valid run file:\n  ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n  ")}`,
+    );
+    return 1;
+  }
+  const target = join(ROOT, "runs", `${run.ranOn}-latency-${scale.atoms}.json`);
+  writeFileSync(target, `${JSON.stringify(run, null, 2)}\n`);
+  line();
+  line(`  run        ${target}`);
+
+  heading("this is not a contract");
+  for (const sentence of NOT_A_CONTRACT.split(". ")) {
+    line(`  ${sentence.trim().replace(/\.$/, "")}.`);
+  }
+  return 0;
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
 
@@ -776,6 +967,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return await retrieval(rest[0]);
     case "reconciliation":
       return reconciliation(rest[0]);
+    case "latency":
+      return await latency();
     case undefined:
     case "--help":
     case "-h":

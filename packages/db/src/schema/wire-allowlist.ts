@@ -214,3 +214,33 @@ export const WIRE_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
 
 /** Every table the migration is expected to create, RLS-forced and policied. */
 export const TENANT_TABLES = Object.keys(WIRE_ALLOWLIST);
+
+/**
+ * Tables that exist in `public` and are deliberately not tenant tables.
+ *
+ * The map above is exhaustive over the schema: `schema-guards` reads `public`
+ * and requires every base table in it to appear in exactly one of these two
+ * maps, so a migration that adds a table nobody classified fails before it
+ * merges. Without that, the allowlist is only strong against a column added to
+ * a table someone already thought about — it iterates its own keys, and a table
+ * it does not know exists is a table it cannot check.
+ *
+ * That check needs somewhere to put the table with no `org_id` at all: a global
+ * lookup, a partition parent, bookkeeping that belongs to the database rather
+ * than to a customer. Such a table cannot simply join the allowlist, because
+ * `TENANT_TABLES` is derived from its keys and every key is asserted to have
+ * FORCE ROW LEVEL SECURITY and an isolation policy.
+ *
+ * This is not the register for "never serialised". Several tables above —
+ * `api_keys`, `atom_suppressions`, `section_extractions`, `egress_events` —
+ * never cross the wire and are listed there anyway, because listing is the
+ * review record and every tenant column earns one. This map is only for tables
+ * outside the tenant model entirely.
+ *
+ * The value is the reason, addressed to whoever reads the diff. An entry with
+ * no argument behind it is an entry that should have been an allowlist entry.
+ */
+export const NON_TENANT_TABLES: Readonly<Record<string, string>> = {
+  // Empty, and worth keeping empty: every table the migrations have created so
+  // far belongs to an org.
+};

@@ -7,7 +7,11 @@ import {
   reconciliationFindings,
   reconciliationRuns,
 } from "../schema/knowledge.js";
-import { TENANT_TABLES, WIRE_ALLOWLIST } from "../schema/wire-allowlist.js";
+import {
+  NON_TENANT_TABLES,
+  TENANT_TABLES,
+  WIRE_ALLOWLIST,
+} from "../schema/wire-allowlist.js";
 import { adminClient } from "./harness.js";
 
 /**
@@ -94,6 +98,84 @@ describe("invariant 3 — nothing that could hold source code", () => {
       expect(actual).toEqual(allowed);
     },
   );
+
+  // The check above is strong against a new column on a table someone already
+  // classified, and blind to a new table. It iterates the allowlist's own keys,
+  // so a table a migration created and nobody registered is checked by nothing
+  // at all, and the sentence two comments up quietly stops being true for it.
+  // This reads the schema instead of the map, and requires the two to agree.
+  //
+  // `public` only: the invariant is about the application's own tables. pgboss
+  // owns its schema, drizzle its migration ledger, and `auth` holds a function
+  // and no storage. Base tables only, because a view stores nothing and has no
+  // column set of its own to review — views are dealt with below rather than
+  // waved through by the filter.
+  it("classifies every table in the schema", async () => {
+    const r = await admin.query<{ table_name: string }>(
+      `select table_name from information_schema.tables
+        where table_schema = 'public' and table_type = 'BASE TABLE'`,
+    );
+    const live = r.rows.map((row) => row.table_name);
+    const classified = new Set([
+      ...Object.keys(WIRE_ALLOWLIST),
+      ...Object.keys(NON_TENANT_TABLES),
+    ]);
+
+    // The instruction travels with the failure. A guard whose diff reads
+    // `- "zz_probe"` gets suppressed; one that says what to do gets fixed.
+    const unclassified = live
+      .filter((table) => !classified.has(table))
+      .sort()
+      .map(
+        (table) =>
+          `${table} is not classified. Add it to WIRE_ALLOWLIST with the columns it may serve, or to NON_TENANT_TABLES with the reason it never crosses the wire.`,
+      );
+    expect(unclassified).toEqual([]);
+
+    // The other direction, for one map only. A stale allowlist key already
+    // fails the check above against an empty column set; a stale
+    // NON_TENANT_TABLES key fails nothing, and would stand ready to wave
+    // through a future table that reuses the name.
+    const stale = Object.keys(NON_TENANT_TABLES)
+      .filter((table) => !live.includes(table))
+      .sort()
+      .map(
+        (table) =>
+          `${table} is in NON_TENANT_TABLES and no longer exists. Remove it, so it cannot vouch for a later table of the same name.`,
+      );
+    expect(stale).toEqual([]);
+  });
+
+  // Exactly one, not at least one: a table in both maps is reviewed by neither,
+  // because each side would be entitled to assume the other had done it.
+  it("classifies no table twice", async () => {
+    const both = Object.keys(NON_TENANT_TABLES)
+      .filter((table) => table in WIRE_ALLOWLIST)
+      .map(
+        (table) =>
+          `${table} is in both WIRE_ALLOWLIST and NON_TENANT_TABLES. It belongs in one.`,
+      );
+    expect(both).toEqual([]);
+  });
+
+  // Views are in scope, and the decision is that there are none. A view is a
+  // serving surface the column guard cannot see through: it can select any
+  // column of any table beneath it, including one nobody allowlisted, and
+  // information_schema reports those columns as the view's own rather than as
+  // the table's. Rather than teach this file to resolve a view's dependencies,
+  // `public` holds base tables, and the first view to want a home here has to
+  // come through this test and be argued for.
+  it("holds no views in public", async () => {
+    const r = await admin.query<{ table_name: string }>(
+      `select table_name from information_schema.tables
+        where table_schema = 'public' and table_type = 'VIEW'`,
+    );
+    const views = r.rows.map(
+      (row) =>
+        `${row.table_name} is a view, and can select columns this guard reviews table by table. Decide what it may expose and record the decision here.`,
+    );
+    expect(views).toEqual([]);
+  });
 });
 
 describe("the authentication lookup is hardened as migration 0014 says", () => {
